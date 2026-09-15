@@ -104,7 +104,9 @@ async def stream_explanation(package: str, version: str, verdict: dict,
         "options": {
             "temperature": 0.3,   # explanation, not creative writing
             "top_p": 0.9,
-            "num_predict": 600,
+            # ~7 tok/s for a 4B model on CPU, so this caps an explanation at
+            # roughly a minute. The verdict card is already on screen by then.
+            "num_predict": 400,
         },
     }
 

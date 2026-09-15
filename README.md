@@ -45,7 +45,7 @@ the UI paints the result immediately rather than waiting on a 4B model on CPU.
 ```bash
 ./setup.sh                          # Python 3.12 venv + CPU-only torch + deps
 
-python ml/acquire_malicious.py      # ~6.7k real malicious packages (a few GB)
+python ml/acquire_malicious.py      # ~2.5k real malicious packages (a few GB)
 python ml/acquire_benign.py         # 5k popular + 3k obscure packages
 python ml/build_dataset.py          # → data/processed/features.parquet
 python ml/train_gbdt.py             # Model A  (seconds)
@@ -67,7 +67,7 @@ evidence come from the classifier.
 
 | Source | Role | License |
 |---|---|---|
-| [DataDog/malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset) | Malicious class — ~6.7k real PyPI packages caught in the wild, human-vetted | Apache-2.0 |
+| [DataDog/malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset) | Malicious class — ~2.5k real PyPI sample archives caught in the wild, human-vetted | Apache-2.0 |
 | [top-pypi-packages](https://hugovk.github.io/top-pypi-packages/) | Benign class — popular packages | public data |
 | PyPI simple index (random sample) | **Hard negatives** — obscure but benign | public data |
 | [ossf/malicious-packages](https://github.com/ossf/malicious-packages) | Veto list, so known-bad packages stay out of the benign class | Apache-2.0 |

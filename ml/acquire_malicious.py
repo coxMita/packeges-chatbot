@@ -13,6 +13,9 @@ the repo. Layout:
 
     samples/pypi/<malicious_intent|compromised_lib>/<package>/<version>/*.zip
 
+As of this writing the PyPI half holds ~2,530 sample archives across 1,832
+package names (the npm half is far larger -- hence the sparse checkout).
+
 `malicious_intent` packages exist only to attack; `compromised_lib` are real
 libraries whose maintainer account was hijacked for one or more releases. We keep
 the distinction as a column -- compromised libraries are the harder, more
@@ -74,29 +77,47 @@ def sparse_clone() -> Path:
 
 
 def iter_samples(repo: Path, limit: int | None = None):
-    """Yield (intent_class, package, version, zip_path) for every PyPI sample."""
+    """Yield (intent_class, package, version, zip_path) for every PyPI sample.
+
+    The corpus uses two layouts, and missing the second silently drops ~10% of
+    the malicious class:
+
+        samples/pypi/<intent>/<package>/<version>/<file>.zip   (2271 samples)
+        samples/pypi/<intent>/<package>/<file>.zip             ( 259 samples)
+
+    Packages in the second form were archived without a resolvable version.
+    """
     n = 0
     for intent in INTENT_CLASSES:
         base = repo / SAMPLES_SUBDIR / intent
         if not base.is_dir():
             continue
-        for pkg_dir in sorted(base.iterdir()):
-            if not pkg_dir.is_dir():
+        for zip_path in sorted(base.rglob("*.zip")):
+            rel = zip_path.relative_to(base).parts
+            if len(rel) >= 3:              # <package>/<version>/<file>.zip
+                package, version = rel[0], rel[1]
+            elif len(rel) == 2:            # <package>/<file>.zip
+                package, version = rel[0], "unknown"
+            else:
                 continue
-            for ver_dir in sorted(pkg_dir.iterdir()):
-                if not ver_dir.is_dir():
-                    continue
-                for zip_path in sorted(ver_dir.glob("*.zip")):
-                    yield intent, pkg_dir.name, ver_dir.name, zip_path
-                    n += 1
-                    if limit is not None and n >= limit:
-                        return
+            yield intent, package, version, zip_path
+            n += 1
+            if limit is not None and n >= limit:
+                return
 
 
-def slug(package: str, version: str) -> str:
-    """Filesystem-safe identifier for one package release."""
-    safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in f"{package}@{version}")
-    return safe[:120]
+def slug(package: str, version: str, archive: Path | None = None) -> str:
+    """Filesystem-safe identifier for one package release.
+
+    A handful of (package, version) pairs ship more than one archive. Without a
+    disambiguator they would overwrite each other on disk, so the archive stem
+    is folded in when a collision is possible.
+    """
+    ident = f"{package}@{version}"
+    if archive is not None:
+        ident = f"{ident}@{archive.stem}"
+    safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in ident)
+    return safe[:150]
 
 
 def main() -> int:
@@ -113,7 +134,7 @@ def main() -> int:
     extracted = skipped = failed = 0
 
     for intent, package, version, zip_path in iter_samples(repo, args.limit):
-        dest = MALICIOUS_DIR / slug(package, version)
+        dest = MALICIOUS_DIR / slug(package, version, zip_path)
 
         if dest.exists() and not args.force:
             skipped += 1

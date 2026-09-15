@@ -90,7 +90,7 @@ export function App() {
           <div className="intro">
             <p>
               Name a PyPI package and it will be downloaded, parsed and scored by a
-              gradient-boosted model trained on ~6,700 real malicious packages.
+              gradient-boosted model trained on ~2,500 real malicious packages.
             </p>
             <p>
               The package is never installed or executed — only read. The classifier

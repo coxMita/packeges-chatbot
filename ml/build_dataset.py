@@ -65,10 +65,28 @@ def _one(args: tuple[dict, str, set[str]]) -> dict | None:
 
 
 def load_index(path: Path, base: Path) -> list[tuple[dict, str]]:
-    if not path.exists():
-        print(f"[warn] {path} not found -- run the matching acquire script first")
-        return []
-    rows = json.loads(path.read_text())
+    """Read an acquisition index, falling back to a scan of what is on disk.
+
+    The acquire scripts write their index once, at the end. Scanning for the
+    per-package .meta.json files instead means a dataset can be built from a
+    partial or still-running acquisition -- useful both for validating the
+    pipeline early and for recovering from an interrupted download.
+    """
+    rows: list[dict] = []
+    if path.exists():
+        rows = json.loads(path.read_text())
+
+    on_disk = sorted(base.glob("*/.meta.json"))
+    if len(on_disk) > len(rows):
+        print(f"[index] {path.name} lists {len(rows)} packages but {len(on_disk)} are "
+              "on disk -- using the on-disk scan (acquisition still running?)")
+        rows = []
+        for meta in on_disk:
+            try:
+                rows.append(json.loads(meta.read_text()))
+            except (OSError, ValueError):
+                continue
+
     out = []
     for r in rows:
         # Index rows store a repo-relative path; resolve it against the root.
