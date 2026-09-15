@@ -31,6 +31,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -493,7 +494,12 @@ def extract_features(
         total_loc += text.count("\n") + 1
 
         try:
-            tree = ast.parse(text)
+            # Third-party source is full of invalid escape sequences and other
+            # SyntaxWarnings. We are judging behaviour, not style -- and a 15k
+            # package run would otherwise bury real output in warning spam.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = ast.parse(text)
         except (SyntaxError, ValueError, RecursionError):
             # Python 2 leftovers and deliberately mangled files both land here.
             n_syntax_errors += 1
