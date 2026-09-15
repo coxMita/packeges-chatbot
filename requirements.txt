@@ -11,9 +11,11 @@ lightgbm==4.5.0
 shap==0.46.0
 
 # --- ML: code embeddings (Model B) ---
-# CPU-only torch: the default PyPI wheel drags in ~2.5GB of CUDA we cannot use.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1
+# NOTE: torch is NOT listed here. The default PyPI wheel drags in ~2.5GB of CUDA
+# we cannot use on this machine. Install the CPU build from its own pinned index:
+#   uv pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+# (kept on a separate index rather than --extra-index-url, so uv's dependency-
+#  confusion protection stays on -- see setup.sh)
 transformers==4.47.1
 
 # --- evaluation / reporting ---
