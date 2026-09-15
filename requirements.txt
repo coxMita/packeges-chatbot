@@ -1,0 +1,29 @@
+# --- data acquisition ---
+requests==2.32.3
+tqdm==4.67.1
+
+# --- ML: feature engineering + gradient boosting (Model A) ---
+numpy==2.1.3
+pandas==2.2.3
+pyarrow==18.1.0
+scikit-learn==1.6.0
+lightgbm==4.5.0
+shap==0.46.0
+
+# --- ML: code embeddings (Model B) ---
+# CPU-only torch: the default PyPI wheel drags in ~2.5GB of CUDA we cannot use.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+transformers==4.47.1
+
+# --- evaluation / reporting ---
+matplotlib==3.9.3
+
+# --- backend ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+httpx==0.28.1
+
+# --- dev ---
+pytest==8.3.4

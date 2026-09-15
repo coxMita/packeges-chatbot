@@ -1,0 +1,39 @@
+# Claude Code
+.claude/
+
+# Data — never commit package samples (malware lives here)
+data/
+!data/.gitkeep
+
+# Trained model artifacts
+ml/models/
+!ml/models/.gitkeep
+ml/reports/*.png
+ml/reports/*.pkl
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.local
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
