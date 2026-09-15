@@ -23,7 +23,7 @@ from typing import AsyncIterator
 import httpx
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
 
 GENERATION_TIMEOUT = 180.0
 
@@ -100,7 +100,7 @@ async def stream_explanation(package: str, version: str, verdict: dict,
         "prompt": build_prompt(package, version, verdict, metadata),
         "system": SYSTEM_PROMPT,
         "stream": True,
-        "think": False,   # qwen3 emits reasoning traces by default; we want prose
+        "think": False,   # ask for prose, not a reasoning trace
         "options": {
             "temperature": 0.3,   # explanation, not creative writing
             "top_p": 0.9,
