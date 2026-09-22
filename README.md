@@ -49,7 +49,7 @@ python ml/acquire_malicious.py      # ~2.5k real malicious packages (a few GB)
 python ml/acquire_benign.py         # 5k popular + 3k obscure packages
 python ml/build_dataset.py          # → data/processed/features.parquet
 python ml/train_gbdt.py             # Model A  (seconds)
-python ml/train_embed.py            # Model B  (1-2h on CPU, cached)
+python ml/train_embed.py            # Model B  (~2.5h on 8 CPU threads, cached, resumable)
 python ml/evaluate.py               # head-to-head → ml/reports/comparison.md
 
 ollama serve &                      # local LLM for explanations
@@ -127,12 +127,69 @@ ignored. SHAP gives exact per-prediction attribution, which is what the chatbot
 narrates.
 
 **Model B — code embeddings + logistic head.** Told nothing about what to look for;
-reads source through a pretrained code encoder and lets a linear head find the
+reads source through a pretrained code encoder
+([CodeBERTa-small](https://huggingface.co/huggingface/CodeBERTa-small-v1), chosen
+partly because it loads without `trust_remote_code`) and lets a linear head find the
 boundary. Slower, essentially unexplainable at the feature level, but not limited to
 patterns someone wrote a feature for.
 
 Run `python ml/evaluate.py` to regenerate `ml/reports/comparison.md` with both models
 scored on the same grouped split.
+
+---
+
+## Results
+
+9,864 packages (2,530 malicious, 4,707 popular, 2,627 obscure), grouped split,
+2,012 held out. Full tables in [`ml/reports/comparison.md`](ml/reports/comparison.md).
+
+| Slice | Model | PR-AUC | Precision | Recall | FPR |
+|---|---|---|---|---|---|
+| overall | **A — LightGBM** | **0.981** | **0.996** | 0.894 | **0.1%** |
+| overall | B — embeddings | 0.947 | 0.873 | 0.892 | 4.8% |
+| obscure | **A — LightGBM** | **0.989** | **1.000** | 0.894 | **0.0%** |
+| obscure | B — embeddings | 0.968 | 0.945 | 0.892 | 5.6% |
+
+Model A wins on every metric, trains in under a second against Model B's ~2.5-hour
+CPU embedding pass, and is the only one whose decisions can be explained. Model B was
+expected to be the more robust of the two; it was not (see below).
+
+### What the headline hides
+
+**A label leak, found and fixed.** The first model ranked `pkg_n_files` top by 10×
+gain. Part of that was a pipeline artifact: DataDog wraps every sample with a
+`package_info-*.json` that no package fetched live from PyPI has. That file, the
+benign-side `.meta.json`, and setuptools' `PKG-INFO`/`*.egg-info/` are now excluded
+from shape counts. The size check in `train_gbdt.py` still fires afterwards, because
+malicious packages really are smaller (median 5 files vs 11 for obscure).
+
+**Size shapes recall, not false positives.** Broken down by file count on the test set:
+
+| Malicious package size | Model A recall | Model B recall | A or B |
+|---|---|---|---|
+| < 4 files | 0.99 | 1.00 | 1.00 |
+| 4–6 files | 0.95 | 0.94 | 0.97 |
+| 7–10 files | 0.76 | 0.78 | 0.87 |
+| 11+ files | **0.38** | **0.32** | 0.41 |
+
+No obscure benign package under 7 files was flagged (0/142), so the model has not
+learned "small means malicious." But a payload padded out with filler files escapes
+both models most of the time. That is the main weakness of this detector.
+
+**Name recognition helps popular packages.** For well-known projects the strongest
+benign signal is often `pkg_typosquat_distance = 0` (the name *is* a popular name),
+which flatters the `popular` slice. The `obscure` slice has no such help.
+
+### End-to-end smoke test
+
+Run through the live API or the backend's own scorer:
+- 12/12 benign packages cleared, including 4 random PyPI packages never seen in
+  training; the closest call was `kerwin` at p=0.817 against a 0.85 threshold.
+- 12/12 held-out malicious samples flagged (scored locally, since PyPI deletes
+  malware once it's caught).
+- The LLM explanation cited only features present in the evidence. It first misread
+  absent features as present (a `0.0` next to "ships a README"). The prompt now
+  states absence in words and labels close calls explicitly.
 
 ---
 
@@ -182,7 +239,11 @@ frontend/              React + Vite + TypeScript chat UI
 - **PyPI only.** The pipeline is structured to take npm next, but nothing here has
   been validated against JavaScript.
 - **Novel obfuscation.** Model A can only see what someone wrote a feature for. A
-  genuinely new packing scheme will evade it; that is the gap Model B exists to probe.
+  genuinely new packing scheme will evade it. Model B was meant to cover that gap but
+  in practice misses the same padded packages Model A does.
+- **Padding evades detection.** Recall on malicious packages with 11+ files is 38%.
+- **The explainer is a 4B model.** It stays within the evidence but can still word
+  things clumsily (it once called a 2-file package's file count "unusually high").
 - Trained on packages caught between roughly 2018 and 2026.
 
 ## License

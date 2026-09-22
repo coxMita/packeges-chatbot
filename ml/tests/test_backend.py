@@ -83,3 +83,25 @@ def test_system_prompt_forbids_reclassification():
 def test_benign_verdict_renders():
     prompt = llm.build_prompt("tidy", "2.0", _verdict(verdict="benign"), {})
     assert "BENIGN" in prompt
+
+
+def test_prompt_spells_out_absent_features():
+    """'the package ships a README' + 'value: 0.0' was read by the LLM as a
+    README being present. Absence must be stated in words."""
+    ev = [{"feature": "pkg_has_readme", "value": 0.0, "contribution": 1.86,
+           "direction": "malicious", "description": "the package ships a README"},
+          {"feature": "call_suspicious_import", "value": 0.0, "contribution": -0.7,
+           "direction": "benign", "description": "imports of subprocess, socket"}]
+    prompt = llm.build_prompt("tiny", "1.0", _verdict(evidence=ev), {})
+
+    assert "observed: NOT present" in prompt
+    assert "observed: 0 (none found)" in prompt
+
+
+def test_prompt_flags_close_calls_only():
+    near = llm.build_prompt("kerwin", "0.2", _verdict(
+        verdict="benign", malicious_probability=0.817, threshold=0.85), {})
+    far = llm.build_prompt("evilpkg", "1.0", _verdict(), {})
+
+    assert "CLOSE CALL" in near and "just below" in near
+    assert "CLOSE CALL" not in far

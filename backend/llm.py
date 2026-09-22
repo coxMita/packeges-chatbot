@@ -40,9 +40,33 @@ those features. Do not invent behaviours, filenames, URLs or CVEs.
 reader, and it is not the same as disagreeing with the verdict.
 4. Write for a developer deciding whether to install this package. Be concrete \
 and specific about what each cited feature means in practice.
-5. Plain prose, 2-4 short paragraphs. No preamble, no bullet lists, no \
+5. Read each "observed" line literally. "NOT present" and "none found" mean \
+the thing is absent -- never describe an absent feature as present.
+6. If the verdict is marked a close call, say so, and do not invent reasons \
+the evidence does not give.
+7. Plain prose, 2-4 short paragraphs. No preamble, no bullet lists, no \
 markdown headers. Do not restate the confidence number -- the UI shows it.
 """
+
+
+# Close-call band: within this distance of the threshold, the verdict could
+# plausibly have gone the other way and the reader should be told so.
+CLOSE_CALL_MARGIN = 0.15
+
+
+def describe_observation(feature: str, value: float) -> str:
+    """State a measured value as a plain fact the LLM cannot misread.
+
+    Descriptions are phrased positively ("the package ships a README"), and a
+    small model pairing that with "value: 0.0" tends to read the description
+    as true. Absence has to be spelled out.
+    """
+    if feature.startswith(("pkg_has_", "install_has_")) or feature.endswith(
+            ("_cmdclass", "_subclass")):
+        return "present" if value else "NOT present"
+    if value == 0:
+        return "0 (none found)"
+    return f"{value:g}"
 
 
 def build_prompt(package: str, version: str, verdict: dict, metadata: dict) -> str:
@@ -60,13 +84,19 @@ def build_prompt(package: str, version: str, verdict: dict, metadata: dict) -> s
     if metadata.get("n_releases"):
         lines.append(f"Releases published: {metadata['n_releases']}")
 
+    margin = verdict["malicious_probability"] - verdict["threshold"]
+    if abs(margin) < CLOSE_CALL_MARGIN:
+        side = "just below" if margin < 0 else "just above"
+        lines.append(f"CLOSE CALL: the probability is {side} the threshold. "
+                     "Say that this verdict is borderline.")
+
     lines += ["", "Ranked evidence from the classifier "
                   "(contribution > 0 pushed toward MALICIOUS, < 0 toward BENIGN):"]
 
     for i, e in enumerate(verdict["evidence"], 1):
         lines.append(
             f"{i}. {e['description']}\n"
-            f"   measured value: {e['value']}   "
+            f"   observed: {describe_observation(e['feature'], e['value'])}   "
             f"contribution: {e['contribution']:+.3f} ({e['direction']})"
         )
 
