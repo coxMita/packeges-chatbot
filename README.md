@@ -51,6 +51,7 @@ python ml/build_dataset.py          # → data/processed/features.parquet
 python ml/train_gbdt.py             # Model A  (seconds)
 python ml/train_embed.py            # Model B  (~2.5h on 8 CPU threads, cached, resumable)
 python ml/evaluate.py               # head-to-head → ml/reports/comparison.md
+python ml/calibrate.py              # tiers + "chance it is really malware"
 
 ollama serve &                      # local LLM for explanations
 ollama pull qwen3.5:4b
@@ -180,6 +181,37 @@ both models most of the time. That is the main weakness of this detector.
 benign signal is often `pkg_typosquat_distance = 0` (the name *is* a popular name),
 which flatters the `popular` slice. The `obscure` slice has no such help.
 
+### What the chatbot shows: three tiers and a calibrated chance
+
+Every analysis is scored twice, with no retraining involved:
+
+1. **Classifier** — Model A's probability and SHAP evidence, as above.
+2. **Code similarity** — the package is embedded with the same encoder as Model B
+   and compared with all 9,656 embeddable training packages. The score is the
+   distance-weighted share of malware among the 10 closest *distinct* families
+   (near-copies at cosine ≥ 0.99 count once), and the UI shows the closest known
+   malware file side by side with this package's most similar file. Collapsing
+   duplicate families and weighting by distance cut false alarms at the 60% mark
+   from 25 to 7 (of 1,448 held-out benign packages) at the same recall.
+
+`ml/calibrate.py` fits a logistic calibrator on the held-out split and combines them:
+
+| Tier | Rule | Held-out benign | Held-out malware |
+|---|---|---|---|
+| 🔴 Malicious | both methods flag it | **0** | 395 |
+| 🟠 Suspicious — review the code | exactly one flags it, or together they reach ≥ 50% | 10 | 92 |
+| 🟢 No threat found | neither | 1,438 | 34 |
+
+The **chance it is really malware** is shown as a range, because the test set is
+26% malware and real PyPI is not. The calibrated probability is re-weighted to a
+1% prior (a package picked at random) and a 10% prior (one you already doubted).
+Out of fold, predictions in the 80–95% band were malware 90.5% of the time.
+
+**The calibration only covers malware that resembles the training data.** Of 7
+packages reported to OSSF after the training snapshot and still on PyPI, 2 reach
+the suspicious tier (`pullgetsage` via similarity, `websetup` via the classifier)
+and 5 read as clean. The UI states this under every result.
+
 ### End-to-end smoke test
 
 Run through the live API or the backend's own scorer:
@@ -242,6 +274,8 @@ frontend/              React + Vite + TypeScript chat UI
   genuinely new packing scheme will evade it. Model B was meant to cover that gap but
   in practice misses the same padded packages Model A does.
 - **Padding evades detection.** Recall on malicious packages with 11+ files is 38%.
+- **New malware families are mostly missed.** 2 of 7 recent OSSF reports reach
+  "suspicious"; none reach "malicious". Only new training data fixes this.
 - **The explainer is a 4B model.** It stays within the evidence but can still word
   things clumsily (it once called a 2-file package's file count "unusually high").
 - Trained on packages caught between roughly 2018 and 2026.

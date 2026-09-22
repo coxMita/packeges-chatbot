@@ -44,7 +44,14 @@ and specific about what each cited feature means in practice.
 the thing is absent -- never describe an absent feature as present.
 6. If the verdict is marked a close call, say so, and do not invent reasons \
 the evidence does not give.
-7. Plain prose, 2-4 short paragraphs. No preamble, no bullet lists, no \
+7. If a code-similarity section is given, it is a separate second opinion: \
+say which known packages the code most resembles and what share of them are \
+malware. If it disagrees with the model's verdict, say so plainly rather than \
+reconciling the two. Similarity is likeness to known samples, not proof.
+8. If an overall assessment is given, lead with it. SUSPICIOUS means the two \
+methods disagree and a human should read the code -- say that, and name which \
+method flagged it. Quote the calibrated chance as given; do not invent others.
+9. Plain prose, 2-4 short paragraphs. No preamble, no bullet lists, no \
 markdown headers. Do not restate the confidence number -- the UI shows it.
 """
 
@@ -73,11 +80,20 @@ def build_prompt(package: str, version: str, verdict: dict, metadata: dict) -> s
     """Render the evidence payload the LLM is allowed to talk about."""
     lines = [
         f"Package: {package} {version}",
-        f"Model verdict: {verdict['verdict'].upper()}",
+        f"Classifier verdict: {verdict['verdict'].upper()}",
         f"Confidence: {verdict['confidence']}%",
         f"Malicious probability: {verdict['malicious_probability']} "
         f"(decision threshold {verdict['threshold']})",
     ]
+
+    ass = verdict.get("assessment")
+    if ass:
+        lines[1:1] = [f"OVERALL ASSESSMENT (lead with this): {ass['tier'].upper()} "
+                      f"(classifier flags it: {'yes' if ass['classifier_flags'] else 'no'}; "
+                      f"code similarity flags it: "
+                      f"{'n/a' if ass['similarity_flags'] is None else 'yes' if ass['similarity_flags'] else 'no'})",
+                  f"Calibrated chance it is really malware: {ass['chance_low']}% if picked "
+                  f"at random from PyPI, {ass['chance_high']}% if already suspected."]
 
     if metadata.get("summary"):
         lines.append(f"Stated purpose: {metadata['summary']}")
@@ -103,9 +119,29 @@ def build_prompt(package: str, version: str, verdict: dict, metadata: dict) -> s
     if not verdict["evidence"]:
         lines.append("(no individual feature had a meaningful contribution)")
 
-    lines += ["", f"Explain to a developer why the model reached the "
-                  f"{verdict['verdict'].upper()} verdict for this package, "
-                  "citing only the evidence above."]
+    sim = verdict.get("similarity")
+    if sim:
+        lines += ["", "Code similarity to the known training packages "
+                      "(second opinion, independent of the model above):",
+                  f"{sim['malicious_percent']}% malicious-weighted: "
+                  f"{sim['n_malicious']} of the {sim['k']} closest known packages "
+                  "by code are malware."]
+        for n in sim["neighbours"][:5]:
+            lines.append(f"- {n['package']} {n['version']}: {n['label']}, "
+                         f"similarity {n['similarity']:.3f}")
+        for m in sim.get("matches", []):
+            lines.append(f"Most similar file to known {m['known_label']} code: "
+                         f"{m['query_file']} resembles {m['known_file']} from "
+                         f"{m['known_package']} (similarity {m['similarity']:.3f})")
+
+    if ass:
+        lines += ["", f"Explain to a developer why the overall assessment is "
+                      f"{ass['tier'].upper()}, quoting the calibrated chance, "
+                      "citing only the evidence above."]
+    else:
+        lines += ["", f"Explain to a developer why the model reached the "
+                      f"{verdict['verdict'].upper()} verdict for this package, "
+                      "citing only the evidence above."]
     return "\n".join(lines)
 
 

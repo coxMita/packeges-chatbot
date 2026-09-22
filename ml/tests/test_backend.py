@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -105,3 +106,55 @@ def test_prompt_flags_close_calls_only():
 
     assert "CLOSE CALL" in near and "just below" in near
     assert "CLOSE CALL" not in far
+
+
+def test_prompt_summarises_similarity_without_code():
+    """Similarity reaches the LLM as names and scores only -- never source."""
+    sim = {
+        "malicious_percent": 90.0, "k": 10, "n_malicious": 9, "n_files_compared": 2,
+        "neighbours": [{"package": "aiogram-sever-patch", "version": "1.0",
+                        "label": "malicious", "pool": "malicious", "similarity": 0.869}],
+        "matches": [{"similarity": 0.823, "query_file": "pkg/__init__.py",
+                     "query_code": "SECRET_QUERY_SOURCE", "known_package": "aiogram-sever-patch",
+                     "known_version": "1.0", "known_label": "malicious",
+                     "known_file": "setup.py", "known_code": "SECRET_KNOWN_SOURCE"}],
+    }
+    prompt = llm.build_prompt("pullgetsage", "0.1.2", _verdict(similarity=sim), {})
+
+    assert "90.0% malicious-weighted" in prompt
+    assert "aiogram-sever-patch" in prompt and "pkg/__init__.py" in prompt
+    assert "SECRET_QUERY_SOURCE" not in prompt
+    assert "SECRET_KNOWN_SOURCE" not in prompt
+
+
+def _assessor(tmp_path):
+    from assess import Assessor
+    cal = {"base_rate": 0.265, "sim_flag": 0.6, "classifier_threshold": 0.85, "n_heldout": 1,
+           "both": {"coef": [1.0, 4.0], "intercept": -2.0},
+           "classifier_only": {"coef": [1.0], "intercept": -1.0}}
+    path = tmp_path / "calibration.json"
+    path.write_text(json.dumps(cal))
+    return Assessor(path)
+
+
+def test_tiers_require_agreement_for_malicious(tmp_path):
+    a = _assessor(tmp_path)
+    assert a.assess(0.99, 0.95)["tier"] == "malicious"
+    assert a.assess(0.99, 0.10)["tier"] == "suspicious"   # classifier only
+    assert a.assess(0.20, 0.90)["tier"] == "suspicious"   # similarity only
+    assert a.assess(0.20, 0.10)["tier"] == "clean"
+    assert a.assess(0.99, None)["tier"] == "malicious"    # no similarity: classifier decides
+
+
+def test_chance_respects_the_base_rate(tmp_path):
+    """A rarer prior must always give a lower chance -- that is the whole point
+    of not showing the raw 26%-malware test-set probability."""
+    r = _assessor(tmp_path).assess(0.9, 0.7)
+    assert 0 < r["chance_low"] < r["chance_high"] < 100
+
+
+def test_high_combined_chance_is_never_shown_as_clean(tmp_path):
+    """Neither method flags it alone, but together they lean malicious."""
+    r = _assessor(tmp_path).assess(0.80, 0.55)
+    assert r["chance_high"] >= 50
+    assert r["tier"] == "suspicious"

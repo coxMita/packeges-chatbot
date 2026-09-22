@@ -58,12 +58,18 @@ body {
 
 .messages {
   flex: 1;
+  min-height: 0;   /* let this pane, not the page, take the overflow */
   overflow-y: auto;
   padding: 22px 4px 8px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
+
+/* Flex children shrink by default, and .card's overflow:hidden lets it shrink
+   to nothing -- so without this, cards got squashed to fit and the list never
+   overflowed, which meant no scrollbar ever appeared. */
+.messages > * { flex-shrink: 0; }
 
 .intro { color: var(--text-dim); font-size: 14px; }
 .intro p { margin: 0 0 12px; }
@@ -269,3 +275,57 @@ body {
 @media (max-width: 600px) {
   .status { width: 100%; margin-left: 0; }
 }
+
+/* ---- code similarity ---- */
+
+.similarity-head { padding: 14px 18px 12px; }
+.confidence-label b.malicious { color: var(--danger); }
+.confidence-label b.benign { color: var(--safe); }
+.similarity-note { margin: 8px 0 0; font-size: 12.5px; color: var(--text-dim); }
+
+.matches { padding: 4px 18px 16px; display: flex; flex-direction: column; gap: 16px; }
+.match-title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12.5px; }
+.match-sim { color: var(--text-faint); font-family: var(--mono); }
+
+.code-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.code-pair figure { margin: 0; min-width: 0; }
+.code-pair figcaption {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-pair pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: 11.5px/1.5 var(--mono);
+  color: var(--text-dim);
+  white-space: pre;
+}
+@media (max-width: 700px) {
+  .code-pair { grid-template-columns: 1fr; }
+}
+
+/* ---- three-tier verdict + calibrated chance ---- */
+
+:root { --warn: #f5a524; --warn-dim: #3a2a10; }
+.card.suspicious { border-color: rgba(245, 165, 36, 0.45); }
+.badge.suspicious { background: var(--warn-dim); color: var(--warn); }
+.bar-fill.suspicious { background: var(--warn); }
+.contribution.suspicious, .confidence-label b.suspicious { color: var(--warn); }
+
+.chance { margin-top: 14px; }
+.chance-main { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--text-dim); }
+.chance-main b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.chance-main b.malicious { color: var(--danger); }
+.chance-main b.suspicious { color: var(--warn); }
+.chance-main b.benign { color: var(--safe); }
+.chance-note { margin: 4px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--text-faint); }

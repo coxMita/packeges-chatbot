@@ -1,7 +1,8 @@
 """FastAPI server for the package analyser.
 
     POST /api/analyze   fetch a package, extract features, return the verdict
-                        plus the ranked evidence behind it
+                        plus the ranked evidence behind it, and the closest
+                        known packages by code similarity
     GET  /api/explain   stream a plain-English explanation of a verdict (SSE)
     GET  /api/health    readiness of the model and the local LLM
 
@@ -17,6 +18,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,8 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ml"))
 
 import llm  # noqa: E402
+from assess import Assessor  # noqa: E402
 from fetch import PackageNotFound, fetch_package  # noqa: E402
 from predict import Scorer  # noqa: E402
+from similarity import SimilarityIndex  # noqa: E402
 
 app = FastAPI(title="Malicious PyPI Package Detector", version="0.1.0")
 
@@ -38,6 +42,8 @@ app.add_middleware(
 )
 
 scorer = Scorer()
+similarity = SimilarityIndex()
+assessor = Assessor()
 _popular_names: set[str] = set()
 
 
@@ -65,6 +71,8 @@ async def health() -> dict:
         "llm_available": await llm.is_available(),
         "llm_model": llm.OLLAMA_MODEL,
         "n_features": len(scorer.feature_names),
+        "similarity_ready": similarity.ready,
+        "calibration_ready": assessor.ready,
     }
 
 
@@ -84,6 +92,16 @@ async def analyze(req: AnalyzeRequest) -> dict:
 
     try:
         verdict = scorer.score(pkg.root, pkg.name, _popular_names)
+
+        # Encoding is CPU-bound for a second or two; keep the event loop free.
+        similar = None
+        if similarity.ready:
+            try:
+                found = await run_in_threadpool(similarity.search, pkg.root)
+                similar = found.to_dict() if found else None
+            except Exception as exc:  # a second opinion must never sink the first
+                print(f"[similarity] search failed for {pkg.name}: {exc}")
+
         return {
             "package": pkg.name,
             "version": pkg.version,
@@ -96,6 +114,11 @@ async def analyze(req: AnalyzeRequest) -> dict:
                 "upload_time": pkg.upload_time,
             },
             **verdict.to_dict(),
+            "similarity": similar,
+            "assessment": assessor.assess(
+                verdict.malicious_probability,
+                similar["malicious_percent"] / 100 if similar else None,
+            ),
         }
     finally:
         # The package source is untrusted and has served its purpose.

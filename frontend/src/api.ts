@@ -34,7 +34,7 @@ export function streamExplanation(
   const params = new URLSearchParams({
     package: result.package,
     version: result.version,
-    verdict: JSON.stringify(result),
+    verdict: JSON.stringify(withoutCode(result)),
   })
 
   return new Promise((resolve, reject) => {
@@ -64,4 +64,19 @@ export function streamExplanation(
     source.onerror = () => close()
     signal?.addEventListener('abort', close)
   })
+}
+
+/**
+ * The explainer is only ever given summaries, never package source -- and the
+ * code snippets would also blow past URL length limits on this GET request.
+ */
+function withoutCode(result: AnalysisResult): AnalysisResult {
+  if (!result.similarity) return result
+  return {
+    ...result,
+    similarity: {
+      ...result.similarity,
+      matches: result.similarity.matches.map((m) => ({ ...m, query_code: '', known_code: '' })),
+    },
+  }
 }
