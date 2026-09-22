@@ -23,6 +23,7 @@ Practical constraints shaped three choices here:
 Usage:
     python ml/train_embed.py                  # embed (cached) then fit the head
     python ml/train_embed.py --embed-only     # just build the cache
+    python ml/train_embed.py --threads 4      # cooler, slower (default 8)
 """
 
 from __future__ import annotations
@@ -42,11 +43,14 @@ from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import CACHE, FEATURES_PARQUET, MODELS, RANDOM_SEED, ensure_dirs
+from config import CACHE, DATA, FEATURES_PARQUET, MODELS, RANDOM_SEED, ensure_dirs
 from features import iter_python_files, read_text
 from split import grouped_split
 
-PRIMARY_MODEL = "jinaai/jina-embeddings-v2-small-code"
+# CodeBERTa-small: 84M-param RoBERTa trained on CodeSearchNet (Python included).
+# A plain architecture matters here -- models that need trust_remote_code would
+# execute downloaded code, which is the one thing this project must never do.
+PRIMARY_MODEL = "huggingface/CodeBERTa-small-v1"
 FALLBACK_MODEL = "microsoft/codebert-base"
 
 MAX_FILES_PER_PACKAGE = 10   # mean-pooled into one package vector
@@ -66,7 +70,6 @@ def load_encoder(name: str):
             tok = AutoTokenizer.from_pretrained(candidate, trust_remote_code=False)
             mdl = AutoModel.from_pretrained(candidate, trust_remote_code=False)
             mdl.eval()
-            torch.set_num_threads(max(1, (torch.get_num_threads() or 4)))
             return tok, mdl, candidate
         except Exception as exc:  # network, auth, or unsupported architecture
             print(f"[encoder] {candidate} unavailable: {type(exc).__name__}: {exc}")
@@ -137,6 +140,12 @@ def build_embeddings(df: pd.DataFrame, root: Path) -> dict[str, np.ndarray]:
             np.savez_compressed(EMBED_CACHE, **cache)
 
     np.savez_compressed(EMBED_CACHE, **cache)
+
+    n_empty = sum(1 for v in cache.values() if not v.any())
+    if n_empty > len(cache) // 10:
+        # A silent all-zeros run trains a coin-flip head and reports ROC-AUC 0.5.
+        raise RuntimeError(f"{n_empty}/{len(cache)} packages embedded as zero vectors -- "
+                           "package paths are probably not resolving")
     print(f"[embed] done in {(time.perf_counter() - t0) / 60:.1f} min -> {EMBED_CACHE}")
     return cache
 
@@ -149,7 +158,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=FEATURES_PARQUET)
     ap.add_argument("--embed-only", action="store_true")
+    ap.add_argument("--threads", type=int, default=8,
+                    help="CPU threads for the encoder; all cores for 1-2h runs hot on a laptop")
     args = ap.parse_args()
+    torch.set_num_threads(max(1, args.threads))
 
     ensure_dirs()
     df = pd.read_parquet(args.data)
@@ -168,7 +180,8 @@ def main() -> int:
                          zip(df["package"], df["version"])])
     df = df[df["path"] != ""].reset_index(drop=True)
 
-    cache = build_embeddings(df, Path(__file__).resolve().parents[1])
+    # Index paths are relative to data/ ("raw/benign/<name>"), not the repo root.
+    cache = build_embeddings(df, DATA)
     if args.embed_only:
         return 0
 

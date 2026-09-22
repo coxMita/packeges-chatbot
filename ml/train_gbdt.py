@@ -56,7 +56,7 @@ PARAMS = {
     "lambda_l2": 1.0,
     "verbose": -1,
     "seed": RANDOM_SEED,
-    "num_threads": 0,
+    "num_threads": 8,  # not all 12 cores: the laptop runs hot
 }
 N_ROUNDS = 800
 EARLY_STOPPING = 50

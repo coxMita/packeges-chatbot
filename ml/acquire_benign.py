@@ -180,7 +180,15 @@ def select_candidates(n_top: int, n_random: int) -> list[tuple[str, str]]:
 
     print(f"[select] {len(popular)} popular + {len(obscure)} obscure (hard negatives) "
           f"from a pool of {len(obscure_pool)}")
-    return [(p, "popular") for p in popular] + [(p, "obscure") for p in obscure]
+
+    # Interleave the two pools rather than returning popular-then-obscure.
+    # Downloads are submitted in list order, so a concatenated list means an
+    # interrupted or resumed run acquires 5000 popular packages before touching
+    # a single hard negative -- which is precisely the half that makes the
+    # evaluation meaningful. Shuffling keeps both pools growing together.
+    candidates = [(p, "popular") for p in popular] + [(p, "obscure") for p in obscure]
+    rng.shuffle(candidates)
+    return candidates
 
 
 # --- download ---------------------------------------------------------------

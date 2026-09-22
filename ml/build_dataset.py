@@ -17,7 +17,7 @@ Two columns exist purely to keep the evaluation honest:
 
 Usage:
     python ml/build_dataset.py
-    python ml/build_dataset.py --workers 8
+    python ml/build_dataset.py --workers 8   # default 6
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def load_index(path: Path, base: Path) -> list[tuple[dict, str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--out", type=Path, default=FEATURES_PARQUET)
     args = ap.parse_args()
 

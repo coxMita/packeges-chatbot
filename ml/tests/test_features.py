@@ -242,3 +242,22 @@ def test_extraction_refuses_path_traversal(tmp_path):
     with pytest.raises(UnsafeArchive):
         extract_tar(archive, tmp_path / "dest")
     assert not (tmp_path.parent / "escaped.txt").exists()
+
+
+def test_pipeline_and_build_metadata_do_not_count_as_files(tmp_path):
+    """DataDog's package_info-*.json and setuptools' egg-info leaked the label
+    into pkg_n_files -- the same code must count the same with or without them."""
+    code = {"setup.py": "from setuptools import setup\nsetup(name='x')\n",
+            "x/__init__.py": "VALUE = 1\n"}
+    plain = extract_features(build(tmp_path / "a", code))
+    wrapped = extract_features(build(tmp_path / "b", {
+        **code,
+        "package_info-x-1.0.json": "{}",
+        ".meta.json": "{}",
+        "PKG-INFO": "Name: x\n",
+        "x.egg-info/PKG-INFO": "Name: x\n",
+        "x.egg-info/SOURCES.txt": "setup.py\n",
+        "x.egg-info/top_level.txt": "x\n",
+    }))
+    assert wrapped["pkg_n_files"] == plain["pkg_n_files"] == 2
+    assert wrapped["pkg_py_file_ratio"] == plain["pkg_py_file_ratio"]
