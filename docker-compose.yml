@@ -1,0 +1,107 @@
+# Full stack: UI (nginx) -> API (FastAPI) -> local LLM (Ollama).
+#
+#   docker compose up -d --build        then open http://localhost:8080
+#
+# Prerequisites on the host: a trained model in ml/models/ (python
+# ml/train_gbdt.py && python ml/calibrate.py). data/ is optional but enables the
+# code-similarity second opinion. Both are mounted read-only.
+#
+# Only the UI port is published, and only on localhost. The API and the LLM are
+# reachable solely on the internal networks.
+
+name: packeges-chatbot
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  frontend:
+    <<: *hardening
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: packeges-chatbot/frontend:${APP_VERSION:-latest}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+
+  backend:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: packeges-chatbot/backend:${APP_VERSION:-latest}
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:4b}
+      # Same-origin behind nginx; only the Vite dev server needs CORS.
+      ALLOWED_ORIGINS: ""
+    volumes:
+      - ./ml/models:/app/ml/models:ro
+      - ./data:/app/data:ro
+    read_only: true
+    tmpfs:
+      # Packages are unpacked here and deleted after each request.
+      - /tmp:size=2g,mode=1777
+    depends_on:
+      # Not service_healthy: the first model pull takes minutes, and the API
+      # serves verdicts without the LLM (explanations say it is unavailable).
+      ollama:
+        condition: service_started
+    networks:
+      - web
+      - llm
+    deploy:
+      resources:
+        limits:
+          cpus: "6"
+          memory: 4g
+
+  ollama:
+    <<: *hardening
+    build:
+      context: ./ollama
+      dockerfile: Dockerfile
+      args:
+        OLLAMA_VERSION: ${OLLAMA_VERSION:-0.34.2}
+    image: packeges-chatbot/ollama:${APP_VERSION:-latest}
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:4b}
+    volumes:
+      - ollama-models:/models
+    networks:
+      - llm
+    deploy:
+      resources:
+        limits:
+          # Leave headroom: sustained all-core load overheats the laptop.
+          cpus: "8"
+          memory: 8g
+
+networks:
+  web:
+  llm:
+
+volumes:
+  ollama-models:
