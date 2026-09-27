@@ -1,92 +1,115 @@
-import { useState } from 'react'
 import type { AnalysisResult, Assessment } from '../types'
+import { Disclosure } from './Disclosure'
 import { EvidenceTable } from './EvidenceTable'
-import { Explanation } from './Explanation'
+import { FileScanPanel } from './FileScanPanel'
+import { Gauge } from './Gauge'
+import { Chart, Code, Nodes } from './Icons'
 import { SimilarityPanel } from './SimilarityPanel'
 
-interface Props {
-  result: AnalysisResult
-  explanation: string
-  streaming: boolean
-}
+type Tier = 'malicious' | 'suspicious' | 'clean'
 
-export function VerdictCard({ result, explanation, streaming }: Props) {
-  const [showEvidence, setShowEvidence] = useState(false)
-  const assessment = result.assessment
-  // Fall back to the classifier alone if the server has no calibration.
-  const tier = assessment?.tier ?? (result.verdict === 'malicious' ? 'malicious' : 'clean')
-  const tone = tier === 'clean' ? 'benign' : tier
-
-  return (
-    <div className={`card ${tone}`}>
-      <div className="card-head">
-        <div className="verdict-row">
-          <span className={`badge ${tone}`}>{TIER_LABEL[tier]}</span>
-          <span className="pkg-name">
-            {result.package} <span className="pkg-version">{result.version}</span>
-          </span>
-        </div>
-
-        {result.metadata.summary && <p className="summary">{result.metadata.summary}</p>}
-
-        {assessment && <Chance assessment={assessment} />}
-
-        <div className="confidence">
-          <div className="confidence-label">
-            <span>Classifier confidence ({result.verdict})</span>
-            <b>{result.confidence.toFixed(1)}%</b>
-          </div>
-          <div className="bar">
-            <div
-              className={`bar-fill ${result.verdict}`}
-              style={{ width: `${Math.max(result.confidence, 2)}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {result.similarity && <SimilarityPanel similarity={result.similarity} />}
-
-      <div className="section">
-        <button className="section-toggle" onClick={() => setShowEvidence((v) => !v)}>
-          <span className="chevron">{showEvidence ? '▼' : '▶'}</span>
-          Evidence the model used ({result.evidence.length} features)
-        </button>
-        {showEvidence && <EvidenceTable result={result} />}
-      </div>
-
-      <div className="section">
-        <Explanation text={explanation} streaming={streaming} />
-      </div>
-    </div>
-  )
-}
-
-const TIER_LABEL = {
+const TIER_LABEL: Record<Tier, string> = {
   malicious: 'Malicious',
   suspicious: 'Suspicious — review the code',
   clean: 'No threat found',
-} as const
+}
 
-function Chance({ assessment: a }: { assessment: Assessment }) {
-  const pct = (p: number) => `${p < 1 ? p.toFixed(1) : Math.round(p)}%`
-  const range = a.chance_low === a.chance_high ? pct(a.chance_low)
-    : `${pct(a.chance_low)} – ${pct(a.chance_high)}`
-  const who = (flag: boolean | null) => (flag === null ? 'n/a' : flag ? 'flags it' : 'clear')
+export function VerdictCard({ result }: { result: AnalysisResult }) {
+  const a = result.assessment
+  // Fall back to the classifier alone if the server has no calibration.
+  const tier: Tier = a?.tier ?? (result.verdict === 'malicious' ? 'malicious' : 'clean')
+  const scan = result.file_scan
+  const flagged = scan?.files.length ?? 0
 
   return (
-    <div className="chance">
-      <div className="chance-main">
-        <span>Chance it is really malware</span>
-        <b className={a.tier === 'clean' ? 'benign' : a.tier}>{range}</b>
+    <div className="card">
+      <div className="card-head">
+        <Gauge value={result.confidence} label="confidence" tone={tier} />
+        <div className="head-text">
+          <div className={`tier ${tier}`}>{TIER_LABEL[tier]}</div>
+          <div className="pkg-line">
+            {result.package} <span className="pkg-version">{result.version}</span>
+          </div>
+          {result.metadata.summary && <p className="summary">{result.metadata.summary}</p>}
+        </div>
       </div>
-      <p className="chance-note">
-        Classifier {who(a.classifier_flags)} · code similarity {who(a.similarity_flags)}.{' '}
-        Low end: a package picked at random from PyPI ({a.prior_low * 100}% malware). High
-        end: one you already had reason to doubt ({a.prior_high * 100}%). Calibrated on
-        known malware styles only — of recent malware unlike the training data, this
-        detector caught {a.novel_malware_caught}.
-      </p>
+
+      <div className="stats">
+        <Stat
+          label="Chance it is malware"
+          value={a ? chanceRange(a) : '—'}
+          sub={a ? 'random pick → already suspected' : 'no calibration loaded'}
+          tone={tier}
+        />
+        <Stat
+          label="Classifier"
+          value={result.verdict === 'malicious' ? 'Flags it' : 'Clear'}
+          sub={`p = ${result.malicious_probability.toFixed(3)} · threshold ${result.threshold}`}
+          tone={result.verdict === 'malicious' ? 'malicious' : 'clean'}
+        />
+        <Stat
+          label="Code similarity"
+          value={result.similarity ? `${result.similarity.malicious_percent.toFixed(0)}% malware` : 'n/a'}
+          sub={result.similarity
+            ? `${result.similarity.n_malicious} of ${result.similarity.k} closest known packages`
+            : 'no Python code to compare'}
+          tone={a?.similarity_flags ? 'malicious' : undefined}
+        />
+      </div>
+
+      {a && (
+        <p className="card-note">
+          Confidence is how far the classifier's score sits from its decision threshold.
+          The chance is calibrated for malware resembling the training data; of recent
+          malware unlike it, this detector caught {a.novel_malware_caught}. Based on{' '}
+          {a.basis}.
+        </p>
+      )}
+
+      {scan && flagged > 0 && (
+        <Disclosure
+          icon={<Code />}
+          title="Suspect code"
+          meta={`${scan.n_files_flagged} of ${scan.n_files_scanned} files`}
+          defaultOpen={tier !== 'clean'}
+        >
+          <FileScanPanel scan={scan} />
+        </Disclosure>
+      )}
+
+      <Disclosure
+        icon={<Chart />}
+        title="Why the model decided this"
+        meta={`${result.evidence.length} signals`}
+        defaultOpen
+      >
+        <EvidenceTable result={result} />
+      </Disclosure>
+
+      {result.similarity && (
+        <Disclosure
+          icon={<Nodes />}
+          title="Similar known packages"
+          meta={`${result.similarity.malicious_percent.toFixed(0)}% malware`}
+        >
+          <SimilarityPanel similarity={result.similarity} />
+        </Disclosure>
+      )}
     </div>
   )
+}
+
+function Stat({ label, value, sub, tone }: { label: string; value: string; sub: string; tone?: string }) {
+  return (
+    <div className="stat">
+      <div className="stat-label">{label}</div>
+      <div className={`stat-value${tone ? ` tone-${tone}` : ''}`}>{value}</div>
+      <div className="stat-sub">{sub}</div>
+    </div>
+  )
+}
+
+function chanceRange(a: Assessment): string {
+  const pct = (p: number) => `${p < 1 ? p.toFixed(1) : Math.round(p)}%`
+  return a.chance_low === a.chance_high ? pct(a.chance_low) : `${pct(a.chance_low)} – ${pct(a.chance_high)}`
 }

@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import CACHE, DATA, FEATURES_PARQUET, MODELS, RANDOM_SEED, ensure_dirs
 from features import iter_python_files, read_text
-from split import grouped_split
+from split import dataset_splits
 
 # CodeBERTa-small: 84M-param RoBERTa trained on CodeSearchNet (Python included).
 # A plain architecture matters here -- models that need trust_remote_code would
@@ -192,11 +192,15 @@ def main() -> int:
     dim = len(next(iter(cache.values())))
     E = np.vstack([cache.get(_key(r), np.zeros(dim, np.float32)) for r in df.itertuples()])
 
-    train_df, test_df = grouped_split(df)
-    tr_idx = train_df.index.to_numpy()
+    # Same partition as Model A: computed on the full table, then looked up,
+    # because splitting only the embeddable subset would draw different lines.
+    where = dataset_splits(pd.read_parquet(args.data)).name_of()
+    part = np.array([where.get(_key(r), "") for r in df.itertuples()])
+    train_df = df[part == "train"].reset_index(drop=True)
+    test_df = df[part == "test"].reset_index(drop=True)
     y_tr = train_df["label"].to_numpy()
 
-    # Re-derive positional indices, since grouped_split resets the index.
+    # Re-derive positional indices, since the split resets the index.
     keys = {_key(r): i for i, r in enumerate(df.itertuples())}
     tr_pos = np.array([keys[_key(r)] for r in train_df.itertuples()])
     te_pos = np.array([keys[_key(r)] for r in test_df.itertuples()])

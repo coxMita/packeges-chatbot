@@ -3,9 +3,9 @@
 
 Neither raw score is that probability. The classifier's output and the
 similarity share are only ranks, and both were measured on a test set that is
-26% malware -- far above the rate on real PyPI. This script fits a tiny
-logistic calibrator on the held-out split, where neither model has seen the
-labels, and records the test base rate so the server can re-weight the answer
+~60% malware -- far above the rate on real PyPI. This script fits a tiny
+logistic calibrator on the validation split (15%), where neither model has seen
+the labels, and records its base rate so the server can re-weight the answer
 to a realistic one (Bayes' rule on the odds).
 
 It also fixes the similarity flag threshold used by the three-tier verdict:
@@ -15,7 +15,8 @@ It also fixes the similarity flag threshold used by the three-tier verdict:
     clean       neither does
 
 No model is retrained. Similarity is scored against training packages only,
-so a held-out package can never find itself.
+so a validation package can never find itself. The test split is not touched
+here; it is reserved for ml/evaluate.py.
 
 Usage:
     python ml/calibrate.py     -> ml/models/calibration.json
@@ -38,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from config import FEATURES_PARQUET, MODELS  # noqa: E402
 from similarity import SimilarityIndex, neighbour_vote  # noqa: E402
-from split import grouped_split  # noqa: E402
+from split import dataset_splits  # noqa: E402
 
 SIM_FLAG = 0.60   # similarity share at or above which similarity "flags"
 EPS = 1e-4
@@ -51,7 +52,8 @@ def logit(p: np.ndarray) -> np.ndarray:
 
 def main() -> int:
     df = pd.read_parquet(FEATURES_PARQUET)
-    train, test = grouped_split(df)
+    splits = dataset_splits(df)
+    train, test = splits.train, splits.val   # calibrate on validation, never on test
 
     gbdt = pickle.load(open(MODELS / "gbdt.pkl", "rb"))
     idx = SimilarityIndex()
@@ -77,8 +79,8 @@ def main() -> int:
 
     # Out-of-fold check that the calibrator is honest before fitting on all of it.
     oof = cross_val_predict(LogisticRegression(), X_both, y, cv=5, method="predict_proba")[:, 1]
-    print(f"[data] {len(y)} held-out packages, {base_rate:.1%} malware\n")
-    print(" predicted   n   actually malware   (5-fold, held-out)")
+    print(f"[data] {len(y)} validation packages, {base_rate:.1%} malware\n")
+    print(" predicted   n   actually malware   (5-fold, validation)")
     for lo, hi in [(0, .05), (.05, .2), (.2, .5), (.5, .8), (.8, .95), (.95, 1.01)]:
         m = (oof >= lo) & (oof < hi)
         if m.any():
@@ -88,16 +90,22 @@ def main() -> int:
     clf_only = LogisticRegression().fit(X_clf, y)
 
     clf_flag = clf >= gbdt["threshold"]
+    review = gbdt.get("review_threshold", gbdt["threshold"])
+    strict = gbdt.get("strict_threshold", 1.1)
     sim_flag = sim >= SIM_FLAG
+    malicious = (clf_flag & sim_flag) | (clf >= strict)
+    suspicious = ~malicious & (clf_flag | sim_flag | (clf >= review))
     print("\n tier         benign   malware")
-    for name, m in [("malicious", clf_flag & sim_flag), ("suspicious", clf_flag ^ sim_flag),
-                    ("clean", ~clf_flag & ~sim_flag)]:
+    for name, m in [("malicious", malicious), ("suspicious", suspicious),
+                    ("clean", ~malicious & ~suspicious)]:
         print(f" {name:11} {int(m[y == 0].sum()):>6}   {int(m[y == 1].sum()):>7}")
 
     out = {
         "base_rate": base_rate,
         "sim_flag": SIM_FLAG,
         "classifier_threshold": float(gbdt["threshold"]),
+        "review_threshold": float(review),
+        "strict_threshold": float(strict),
         "both": {"coef": both.coef_[0].tolist(), "intercept": float(both.intercept_[0])},
         "classifier_only": {"coef": clf_only.coef_[0].tolist(),
                             "intercept": float(clf_only.intercept_[0])},

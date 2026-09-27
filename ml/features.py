@@ -40,6 +40,13 @@ from pathlib import Path
 
 # Callables that hand control to attacker-supplied data.
 EXEC_CALLS = {"eval", "exec", "compile", "__import__"}
+IMPORT_CALLS = {"__import__", "import_module"}
+# Home-directory lookups and filesystem walks: reconnaissance when they sit next
+# to decoding and hidden imports, routine when they don't -- hence the
+# worst-file features below rather than package-wide counts.
+HOME_CALLS = {"expanduser", "home", "getuser"}
+FS_WALK_CALLS = {"listdir", "walk", "scandir", "glob", "iglob", "rglob", "iterdir"}
+FILE_DELETE_CALLS = {"remove", "unlink", "rmtree", "rmdir"}
 
 # Module-qualified calls, matched on the dotted tail of the call expression.
 PROCESS_CALLS = {
@@ -145,6 +152,12 @@ class _Acc:
     chmod_calls: int = 0
     lambda_count: int = 0
     try_except_pass: int = 0
+    computed_import: int = 0
+    obfuscated_import: int = 0
+    char_code_build: int = 0
+    home_access: int = 0
+    fs_walk: int = 0
+    file_delete: int = 0
     string_literals: list[str] = None
     identifiers: list[str] = None
 
@@ -166,6 +179,10 @@ def dotted_name(node: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
+GENERIC_BARE_NAMES = {"open", "load", "loads", "get", "post", "put", "run", "call",
+                      "decode", "socket", "decompress"}
+
+
 def _tail_matches(dotted: str, targets: set[str]) -> bool:
     """True if `dotted` matches a target, allowing aliased/partial prefixes.
 
@@ -175,20 +192,96 @@ def _tail_matches(dotted: str, targets: set[str]) -> bool:
     if dotted in targets:
         return True
     for t in targets:
-        if dotted.endswith("." + t) or dotted == t.split(".")[-1]:
+        if dotted.endswith("." + t):
+            return True
+        # A bare call (`from base64 import b64decode`) matches only when the
+        # name is distinctive: bare `open`, `get` or `loads` is almost always
+        # the builtin, requests or json, not shelve, requests or pickle.
+        if dotted == t.split(".")[-1] and dotted not in GENERIC_BARE_NAMES:
             return True
     return False
 
 
+def _is_int_seq(node: ast.AST) -> bool:
+    return (isinstance(node, (ast.List, ast.Tuple)) and len(node.elts) >= 2
+            and all(isinstance(e, ast.Constant) and type(e.value) is int for e in node.elts))
+
+
+def _is_char_code_build(node: ast.Call) -> bool:
+    """A string spelled as character codes: `chr(111)`, `map(chr, [...])`,
+    `bytes([111, 115]).decode()`. Real code writes the string."""
+    short = dotted_name(node.func).split(".")[-1]
+    if short == "chr" and node.args and isinstance(node.args[0], ast.Constant) \
+            and type(node.args[0].value) is int:
+        return True
+    if short == "map" and node.args and dotted_name(node.args[0]) == "chr":
+        return True
+    if short in {"bytes", "bytearray"} and node.args and _is_int_seq(node.args[0]):
+        return True
+    return False
+
+
+def _first_str_arg(node: ast.Call) -> str:
+    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        return node.args[0].value
+    return ""
+
+
+# Kinds of suspicious operation. Legitimate libraries spread these across
+# modules; malware bolted onto a real library packs them into one function.
+FILE_CATEGORIES = {
+    "exec": ("exec_calls",),
+    "process": ("process_calls",),
+    "network": ("network_calls",),
+    "deserialize": ("deserialize_calls",),
+    "decode": ("decode_calls",),
+    "dynamic_import": ("computed_import",),
+    "hidden_name": ("char_code_build", "obfuscated_import"),
+    "home": ("home_access",),
+    "fs_walk": ("fs_walk",),
+    "delete": ("file_delete",),
+    "env": ("env_reads",),
+    "chmod": ("chmod_calls",),
+    "silent_except": ("try_except_pass",),
+}
+# What counts toward a file's suspicious-call density. Walks, deletes and
+# swallowed exceptions are too common alone to count; they only add categories.
+DENSITY_FIELDS = ("exec_calls", "process_calls", "network_calls", "deserialize_calls",
+                  "decode_calls", "computed_import", "char_code_build", "home_access")
+# Floor on a file's size for the density, so a 3-line shim with one
+# `__import__` does not read as 333 calls per kLOC.
+MIN_DENSITY_LOC = 50
+_COUNTER_FIELDS = sorted({f for fs in FILE_CATEGORIES.values() for f in fs} | set(DENSITY_FIELDS))
+
+
+FIELD_CATEGORY = {f: cat for cat, fields in FILE_CATEGORIES.items() for f in fields}
+
+
+def _counters(acc: "_Acc") -> dict[str, int]:
+    return {f: getattr(acc, f) for f in _COUNTER_FIELDS}
+
+
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, acc: _Acc):
+    def __init__(self, acc: _Acc, hits: list | None = None):
         self.acc = acc
         self._func_depth = 0
+        # When given, every suspicious operation is also recorded as
+        # (category, line, call name) -- the per-file scan's receipts.
+        self.hits = hits
 
     # -- calls ---------------------------------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
         name = dotted_name(node.func)
+        before = _counters(self.acc) if self.hits is not None else None
+        self._count_call(node, name)
+        if before is not None:
+            for field, value in _counters(self.acc).items():
+                if value > before[field]:
+                    self.hits.append((FIELD_CATEGORY[field], node.lineno, name))
+        self.generic_visit(node)
+
+    def _count_call(self, node: ast.Call, name: str) -> None:
         short = name.split(".")[-1]
         a = self.acc
 
@@ -210,6 +303,28 @@ class _Visitor(ast.NodeVisitor):
             a.deserialize_calls += 1
         if _tail_matches(name, DECODE_CALLS):
             a.decode_calls += 1
+        # `__import__(name)` with anything but a literal hides which module is
+        # loaded -- `__import__(''.join(map(chr, [111, 115])))` is `import os`.
+        if short in IMPORT_CALLS and node.args and not (
+                isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            a.computed_import += 1
+            # Plugin loaders compute module names from config; nothing
+            # legitimate spells one out in character codes or decodes it.
+            if any(isinstance(sub, ast.Call) and (
+                    _is_char_code_build(sub) or _tail_matches(dotted_name(sub.func), DECODE_CALLS)
+                    or dotted_name(sub.func).endswith("decode"))
+                   for sub in ast.walk(node.args[0])):
+                a.obfuscated_import += 1
+        if _is_char_code_build(node):
+            a.char_code_build += 1
+        if short in HOME_CALLS and (short != "expanduser" or _first_str_arg(node).startswith("~")):
+            a.home_access += 1
+        if short in FS_WALK_CALLS:
+            a.fs_walk += 1
+        # `remove` is also list.remove, so only count it on os/shutil; the
+        # others are file operations whatever the receiver.
+        if short in FILE_DELETE_CALLS and (short != "remove" or name in {"os.remove", "shutil.remove"}):
+            a.file_delete += 1
         if short in {"getattr", "setattr"}:
             a.dynamic_attr += 1
         if name.endswith("os.chmod") or short == "chmod":
@@ -221,8 +336,6 @@ class _Visitor(ast.NodeVisitor):
                         a.file_writes += 1
         if name.endswith("environ.get") or name.endswith("os.getenv") or short == "getenv":
             a.env_reads += 1
-
-        self.generic_visit(node)
 
     # -- imports -------------------------------------------------------------
 
@@ -260,6 +373,8 @@ class _Visitor(ast.NodeVisitor):
         for handler in node.handlers:
             if len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass):
                 self.acc.try_except_pass += 1
+                if self.hits is not None:
+                    self.hits.append(("silent_except", handler.lineno, "except: pass"))
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
@@ -514,6 +629,8 @@ def extract_features(
     has_setup_py = 0
 
     text_budget = MAX_TOTAL_TEXT_BYTES
+    worst_categories = 0
+    worst_density = 0.0
 
     for path in py_files:
         text = read_text(path)
@@ -538,9 +655,22 @@ def extract_features(
             # Python 2 leftovers and deliberately mangled files both land here.
             n_syntax_errors += 1
             continue
+        before = _counters(acc)
+        try:
+            _Visitor(acc).visit(tree)
+        except RecursionError:
+            # Deeply nested code (generated parsers, deliberate nesting bombs)
+            # can outrun the recursive walk. Count it like a parse failure
+            # rather than losing the whole package.
+            n_syntax_errors += 1
+            continue
         n_parsed += 1
-
-        _Visitor(acc).visit(tree)
+        delta = {k: v - before[k] for k, v in _counters(acc).items()}
+        worst_categories = max(worst_categories, sum(
+            1 for fields in FILE_CATEGORIES.values() if any(delta[f] for f in fields)))
+        file_loc = max(text.count("\n") + 1, MIN_DENSITY_LOC)
+        worst_density = max(worst_density,
+                            sum(delta[f] for f in DENSITY_FIELDS) * 1000 / file_loc)
 
         if path.name == "setup.py":
             has_setup_py = 1
@@ -571,6 +701,13 @@ def extract_features(
         "call_import_in_function": float(acc.import_inside_function),
         "call_try_except_pass": float(acc.try_except_pass),
         "call_lambda": float(acc.lambda_count),
+        "call_computed_import": float(acc.computed_import),
+        "call_obfuscated_import": float(acc.obfuscated_import),
+        "obf_char_code_build": float(acc.char_code_build),
+
+        # -- worst single file: one bad file cannot be averaged away --
+        "worst_file_categories": float(worst_categories),
+        "worst_file_suspicious_per_kloc": worst_density,
 
         # -- decode / unpack --
         "decode_calls": float(acc.decode_calls),
@@ -645,6 +782,11 @@ FEATURE_DESCRIPTIONS: dict[str, str] = {
     "call_import_in_function": "imports hidden inside function bodies rather than at module level",
     "call_try_except_pass": "'except: pass' blocks that silently swallow failures",
     "call_lambda": "lambda expressions, often used to inline obfuscated logic",
+    "call_computed_import": "__import__/import_module called with a computed name, hiding which module is loaded",
+    "call_obfuscated_import": "__import__/import_module of a name built from character codes or decoded data -- the module is deliberately disguised",
+    "obf_char_code_build": "strings spelled out as character codes (chr(111), map(chr, [...])) instead of written",
+    "worst_file_categories": "most distinct kinds of suspicious operation (exec, decoding, hidden imports, home-directory access, file walking, deleting, ...) found together in one file",
+    "worst_file_suspicious_per_kloc": "suspicious calls per 1000 lines in the single worst file",
     "decode_calls": "base64/hex/zlib decoding calls",
     "decode_then_exec": "a decode call nested directly inside exec/eval -- a packed payload",
     "pkg_n_files": "total files in the package",

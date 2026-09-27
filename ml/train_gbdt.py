@@ -36,9 +36,9 @@ from sklearn.model_selection import StratifiedGroupKFold
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import FEATURES_PARQUET, MODELS, RANDOM_SEED, REPORTS, ensure_dirs
+from config import FEATURES_PARQUET, MODELS, PROCESSED, RANDOM_SEED, REPORTS, ensure_dirs
 from features import feature_names
-from split import grouped_split, xy
+from split import dataset_splits, with_synthetic, xy
 
 # beta < 1 weights precision over recall: a false positive on a legitimate
 # package is more damaging to trust than missing one sample in a corpus.
@@ -58,6 +58,15 @@ PARAMS = {
     "seed": RANDOM_SEED,
     "num_threads": 8,  # not all 12 cores: the laptop runs hot
 }
+# A tuned parameter set from `ml/experiment.py --tune`, if one has been saved.
+TUNED = REPORTS / "gbdt_params.json"
+# Out-of-fold benign false-positive rate for the lower "review" threshold:
+# above it a package is sent to a human (suspicious) rather than cleared.
+REVIEW_FPR = 0.01
+# ...and for the upper "strict" threshold: above it the classifier alone is
+# enough for the malicious tier, without a second vote from similarity.
+STRICT_FPR = 0.001
+
 N_ROUNDS = 800
 EARLY_STOPPING = 50
 
@@ -70,6 +79,58 @@ def tune_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
         if s > best_s:
             best_t, best_s = float(t), float(s)
     return best_t
+
+
+def cv_oof(X: np.ndarray, y: np.ndarray, groups: np.ndarray, params: dict = PARAMS,
+           folds: int = 5, log: bool = True) -> tuple[np.ndarray, int]:
+    """Grouped K-fold out-of-fold scores, and the average early-stopped round count."""
+    cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=RANDOM_SEED)
+    oof = np.zeros(len(y))
+    best_rounds: list[int] = []
+
+    for fold, (tr, va) in enumerate(cv.split(X, y, groups), 1):
+        pos, neg = int(y[tr].sum()), int((1 - y[tr]).sum())
+        booster = lgb.train(
+            {**params, "scale_pos_weight": neg / max(pos, 1)},
+            lgb.Dataset(X[tr], label=y[tr]),
+            num_boost_round=N_ROUNDS,
+            valid_sets=[lgb.Dataset(X[va], label=y[va])],
+            callbacks=[lgb.early_stopping(EARLY_STOPPING, verbose=False)],
+        )
+        oof[va] = booster.predict(X[va], num_iteration=booster.best_iteration)
+        best_rounds.append(booster.best_iteration or N_ROUNDS)
+        if log:
+            print(f"[cv] fold {fold}: PR-AUC {average_precision_score(y[va], oof[va]):.4f} "
+                  f"({booster.best_iteration} rounds)")
+    return oof, max(int(np.mean(best_rounds)), 50)
+
+
+def fit_final(X: np.ndarray, y: np.ndarray, rounds: int, params: dict = PARAMS) -> lgb.Booster:
+    pos, neg = int(y.sum()), int((1 - y).sum())
+    return lgb.train({**params, "scale_pos_weight": neg / max(pos, 1)},
+                     lgb.Dataset(X, label=y), num_boost_round=rounds)
+
+
+def threshold_at_fpr(y: np.ndarray, p: np.ndarray, fpr: float) -> float:
+    """Lowest threshold whose out-of-fold benign false-positive rate is <= fpr."""
+    benign = np.sort(p[y == 0])
+    k = int(np.floor(len(benign) * (1 - fpr)))
+    return float(benign[min(k, len(benign) - 1)]) + 1e-9
+
+
+def save_reference(train: pd.DataFrame, cols: list[str], path: Path) -> None:
+    """Sorted per-class values of every feature on the real training packages.
+
+    The server compares a new package's value against these to say how common
+    it was among malware vs. benign packages the model learned from.
+    """
+    arrays = {}
+    for label, name in ((1, "malicious"), (0, "benign")):
+        part = train[train["label"] == label]
+        for c in cols:
+            arrays[f"{name}/{c}"] = np.sort(part[c].to_numpy(np.float32))
+    np.savez_compressed(path, **arrays)
+    print(f"[reference] per-class feature distributions -> {path}")
 
 
 def main() -> int:
@@ -86,49 +147,44 @@ def main() -> int:
         print("[error] the dataset contains only one class -- acquire both before training")
         return 1
 
-    train_df, test_df = grouped_split(df)
+    splits = dataset_splits(df)
+    train_df = splits.train
+    n_real = len(train_df)
+    # Synthetic trojanized libraries (ml/augment.py): training only, and only
+    # those whose host and donor code both sit in this training split.
+    train_df = with_synthetic(train_df, PROCESSED / "augmented.parquet")
+    print(f"[data] + {len(train_df) - n_real} synthetic packages for training")
+    params = {**PARAMS, **json.loads(TUNED.read_text())} if TUNED.exists() else PARAMS
+    if TUNED.exists():
+        print(f"[params] tuned set from {TUNED.name}")
     X, y = xy(train_df, cols)
     groups = train_df["group"].to_numpy()
 
-    print(f"[data] {len(df)} packages | train {len(train_df)} / test {len(test_df)}")
-    print(f"[data] positives: train {int(y.sum())}, test {int(test_df['label'].sum())}")
+    print(f"[data] {len(df)} packages | train {n_real} / val {len(splits.val)} / "
+          f"test {len(splits.test)} | future (held out) {len(splits.future)}")
+    print(f"[data] positives: train {int(y.sum())}, val {int(splits.val['label'].sum())}, "
+          f"test {int(splits.test['label'].sum())}")
 
     # --- cross-validated fit, for an honest threshold and a stable round count
-    cv = StratifiedGroupKFold(n_splits=args.folds, shuffle=True, random_state=RANDOM_SEED)
-    oof = np.zeros(len(train_df))
-    best_rounds: list[int] = []
+    oof, rounds = cv_oof(X, y, groups, params, folds=args.folds)
 
-    for fold, (tr, va) in enumerate(cv.split(X, y, groups), 1):
-        pos, neg = int(y[tr].sum()), int((1 - y[tr]).sum())
-        params = {**PARAMS, "scale_pos_weight": neg / max(pos, 1)}
+    # Thresholds are set on real packages only: the synthetic benign controls
+    # are harder than real code and would push every threshold up.
+    real = (train_df["pool"] != "synthetic").to_numpy()
+    y_real, oof_real = y[real], oof[real]
+    print(f"\n[cv] out-of-fold (real packages) ROC-AUC {roc_auc_score(y_real, oof_real):.4f} | "
+          f"PR-AUC {average_precision_score(y_real, oof_real):.4f}")
 
-        booster = lgb.train(
-            params,
-            lgb.Dataset(X[tr], label=y[tr]),
-            num_boost_round=N_ROUNDS,
-            valid_sets=[lgb.Dataset(X[va], label=y[va])],
-            callbacks=[lgb.early_stopping(EARLY_STOPPING, verbose=False)],
-        )
-        oof[va] = booster.predict(X[va], num_iteration=booster.best_iteration)
-        best_rounds.append(booster.best_iteration or N_ROUNDS)
-        print(f"[cv] fold {fold}: PR-AUC {average_precision_score(y[va], oof[va]):.4f} "
-              f"({booster.best_iteration} rounds)")
-
-    print(f"\n[cv] out-of-fold ROC-AUC {roc_auc_score(y, oof):.4f} | "
-          f"PR-AUC {average_precision_score(y, oof):.4f}")
-
-    threshold = tune_threshold(y, oof)
+    threshold = tune_threshold(y_real, oof_real)
     print(f"[cv] tuned threshold {threshold:.3f} (F{FBETA}-optimal, precision-weighted)")
+    review = min(threshold_at_fpr(y_real, oof_real, REVIEW_FPR), threshold)
+    print(f"[cv] review threshold {review:.3f} ({REVIEW_FPR:.0%} out-of-fold false-positive rate)")
+    strict = max(threshold_at_fpr(y_real, oof_real, STRICT_FPR), threshold)
+    print(f"[cv] strict threshold {strict:.3f} ({STRICT_FPR:.1%} out-of-fold false-positive rate)")
 
     # --- final fit on all training data, at the CV-average round count
-    rounds = max(int(np.mean(best_rounds)), 50)
-    pos, neg = int(y.sum()), int((1 - y).sum())
     t0 = time.perf_counter()
-    model = lgb.train(
-        {**PARAMS, "scale_pos_weight": neg / max(pos, 1)},
-        lgb.Dataset(X, label=y),
-        num_boost_round=rounds,
-    )
+    model = fit_final(X, y, rounds, params)
     print(f"[fit] final model: {rounds} rounds in {time.perf_counter() - t0:.1f}s")
 
     # --- leakage check ------------------------------------------------------
@@ -152,12 +208,17 @@ def main() -> int:
         "model": model,
         "feature_names": cols,
         "threshold": threshold,
+        "review_threshold": review,
+        "strict_threshold": strict,
+        "params": params,
         "fbeta": FBETA,
-        "cv_roc_auc": float(roc_auc_score(y, oof)),
-        "cv_pr_auc": float(average_precision_score(y, oof)),
+        "cv_roc_auc": float(roc_auc_score(y_real, oof_real)),
+        "cv_pr_auc": float(average_precision_score(y_real, oof_real)),
     }
     with open(MODELS / "gbdt.pkl", "wb") as fh:
         pickle.dump(artifact, fh)
+
+    save_reference(train_df[real], cols, MODELS / "feature_reference.npz")
 
     (REPORTS / "gbdt_importance.json").write_text(json.dumps(
         [{"feature": n, "gain": float(g)} for n, g in ranked], indent=2

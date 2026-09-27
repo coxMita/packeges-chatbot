@@ -2,12 +2,14 @@
 
 Two outputs, both built from ml/models/calibration.json (see ml/calibrate.py):
 
-  * a tier -- malicious only when both methods flag the package, suspicious
-    when exactly one does. On the held-out split the "malicious" tier had no
-    false alarms at all; the disagreements are what a human should look at.
+  * a tier -- malicious when both methods flag the package, or the classifier
+    alone clears its strict threshold (0.1% out-of-fold false alarms);
+    suspicious when one flags it or the classifier clears its lower review
+    threshold (1%); clean otherwise. Suspicious is what a human should read.
   * the chance the package really is malware, as a range. The calibrator was
-    fitted on a test set that is ~26% malware; real PyPI is nowhere near that,
-    so the answer is re-weighted to two prior rates:
+    fitted on the validation split, whose malware share (recorded as
+    `base_rate`) is nowhere near real PyPI's, so the answer is re-weighted to
+    two prior rates:
         PRIOR_LOW   a package picked at random from PyPI
         PRIOR_HIGH  a package someone already had a reason to doubt
 """
@@ -32,10 +34,11 @@ PRIOR_HIGH = 0.10
 SUSPICIOUS_CHANCE = 50.0
 EPS = 1e-4
 
-# Measured, not modelled: the calibrator only knows malware that resembles the
-# training data. Of 7 malware packages reported to OSSF after the training
-# snapshot, 2 reach the suspicious tier (websetup, pullgetsage); 5 read clean.
-NOVEL_MALWARE_CAUGHT = "2 of 7"
+# Measured, not modelled (ml/report.py, live set): the calibrator only knows
+# malware that resembles the training data. Of 27 OSSF-reported malware
+# packages absent from the dataset and still downloadable from PyPI, 3 reach
+# the malicious tier and 4 suspicious; 20 read clean.
+NOVEL_MALWARE_CAUGHT = "7 of 27"
 
 
 def _logit(p: float) -> float:
@@ -65,17 +68,25 @@ class Assessor:
         cal = self.cal
 
         clf_flag = clf_prob >= cal["classifier_threshold"]
+        # Older calibration files predate the review/strict thresholds.
+        clf_review = clf_prob >= cal.get("review_threshold", cal["classifier_threshold"])
+        clf_strict = clf_prob >= cal.get("strict_threshold", 1.1)
         if sim_share is None:
             model, x = cal["classifier_only"], [_logit(clf_prob)]
-            tier = "malicious" if clf_flag else "clean"
+            sim_flag = False
             basis = "classifier only (similarity unavailable)"
         else:
             model, x = cal["both"], [_logit(clf_prob), sim_share]
             sim_flag = sim_share >= cal["sim_flag"]
-            tier = ("malicious" if clf_flag and sim_flag
-                    else "suspicious" if clf_flag or sim_flag
-                    else "clean")
             basis = "classifier and code similarity"
+        # Without similarity there is no second vote to wait for.
+        tier = ("malicious" if clf_strict or (clf_flag and (sim_flag or sim_share is None))
+                else "suspicious" if clf_flag or sim_flag or clf_review
+                else "clean")
+        if clf_strict and not sim_flag:
+            basis += "; the classifier alone is confident enough"
+        elif clf_review and not clf_flag and not sim_flag:
+            basis += "; below the classifier's alarm threshold but high enough to review"
 
         z = model["intercept"] + sum(c * v for c, v in zip(model["coef"], x))
         p_test = 1 / (1 + math.exp(-z))

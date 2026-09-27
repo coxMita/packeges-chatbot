@@ -1,9 +1,12 @@
 """FastAPI server for the package analyser.
 
     POST /api/analyze   fetch a package, extract features, return the verdict
-                        plus the ranked evidence behind it, and the closest
-                        known packages by code similarity
-    GET  /api/explain   stream a plain-English explanation of a verdict (SSE)
+                        plus the ranked evidence behind it, the closest
+                        known packages by code similarity, and a per-file
+                        scan of where the suspicious code sits
+    POST /api/explain   stream a plain-English explanation of a verdict (SSE)
+    POST /api/chat      stream an answer to a follow-up question, grounded in
+                        the analyses already shown in the conversation (SSE)
     GET  /api/health    readiness of the model and the local LLM
 
 The two are split on purpose: /analyze is fast and deterministic, so the UI can
@@ -14,7 +17,9 @@ paint the verdict card immediately, while /explain streams token by token from a
 from __future__ import annotations
 
 import json
+import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -29,17 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ml"))
 import llm  # noqa: E402
 from assess import Assessor  # noqa: E402
 from fetch import PackageNotFound, fetch_package  # noqa: E402
+from file_scan import scan_package  # noqa: E402
 from predict import Scorer  # noqa: E402
 from similarity import SimilarityIndex  # noqa: E402
-
-app = FastAPI(title="Malicious PyPI Package Detector", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
 
 scorer = Scorer()
 similarity = SimilarityIndex()
@@ -47,7 +44,6 @@ assessor = Assessor()
 _popular_names: set[str] = set()
 
 
-@app.on_event("startup")
 def _load_popular() -> None:
     """Load the typosquat reference list once, if it has been cached."""
     global _popular_names
@@ -57,6 +53,46 @@ def _load_popular() -> None:
     except Exception as exc:  # offline, or the cache has not been built yet
         print(f"[startup] typosquat reference list unavailable ({exc}); "
               "the pkg_typosquat_distance feature will default to 'far'")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    _load_popular()
+    yield
+
+
+app = FastAPI(title="Malicious PyPI Package Detector", version="0.2.0", lifespan=lifespan)
+
+# Only needed when the UI is served from another origin (the Vite dev server).
+# In Docker, nginx serves the UI and proxies /api, so every call is same-origin.
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+
+class ChatTurn(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., max_length=8000)
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    # /api/analyze payloads from this conversation, oldest first, code stripped.
+    analyses: list[dict] = Field(default_factory=list, max_length=20)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=50)
+
+
+class ExplainRequest(BaseModel):
+    package: str = Field(..., min_length=1, max_length=200)
+    version: str = Field("", max_length=100)
+    # The /api/analyze payload being explained, code stripped.
+    verdict: dict
 
 
 class AnalyzeRequest(BaseModel):
@@ -92,6 +128,7 @@ async def analyze(req: AnalyzeRequest) -> dict:
 
     try:
         verdict = scorer.score(pkg.root, pkg.name, _popular_names)
+        files = await run_in_threadpool(scan_package, pkg.root)
 
         # Encoding is CPU-bound for a second or two; keep the event loop free.
         similar = None
@@ -115,6 +152,7 @@ async def analyze(req: AnalyzeRequest) -> dict:
             },
             **verdict.to_dict(),
             "similarity": similar,
+            "file_scan": files,
             "assessment": assessor.assess(
                 verdict.malicious_probability,
                 similar["malicious_percent"] / 100 if similar else None,
@@ -125,28 +163,46 @@ async def analyze(req: AnalyzeRequest) -> dict:
         pkg.cleanup()
 
 
-@app.get("/api/explain")
-async def explain(package: str, version: str, verdict: str) -> StreamingResponse:
+@app.post("/api/explain")
+async def explain(req: ExplainRequest) -> StreamingResponse:
     """Stream the LLM's explanation of an already-computed verdict.
 
-    `verdict` is the JSON payload returned by /api/analyze. The client passes it
-    back rather than the server re-analysing, so the explanation is guaranteed
-    to describe the exact verdict the user is looking at.
+    The client posts back the /api/analyze payload rather than the server
+    re-analysing, so the explanation is guaranteed to describe the exact
+    verdict the user is looking at. (It is a POST because that payload, with
+    per-feature training context and the file scan, outgrows a URL.)
     """
-    try:
-        payload = json.loads(verdict)
-    except ValueError:
-        raise HTTPException(400, "verdict must be the JSON object from /api/analyze")
-
+    payload = req.verdict
     for key in ("verdict", "confidence", "malicious_probability", "threshold", "evidence"):
         if key not in payload:
             raise HTTPException(400, f"verdict payload is missing '{key}'")
 
     metadata = payload.get("metadata", {})
+    return _sse(llm.stream_explanation(req.package, req.version, payload, metadata))
 
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest) -> StreamingResponse:
+    """Stream an answer to a follow-up question about earlier analyses.
+
+    Like /explain, the client sends back what it was shown, so the answer is
+    grounded in exactly those verdicts; the server keeps no conversation state.
+    """
+    for a in req.analyses:
+        for key in ("package", "verdict", "confidence", "malicious_probability",
+                    "threshold", "evidence"):
+            if key not in a:
+                raise HTTPException(400, f"an analysis is missing '{key}'")
+
+    history = [t.model_dump() for t in req.history]
+    return _sse(llm.stream_chat(req.question, req.analyses, history))
+
+
+def _sse(chunks) -> StreamingResponse:
+    """Wrap an async text iterator as a server-sent event stream."""
     async def event_stream():
         try:
-            async for chunk in llm.stream_explanation(package, version, payload, metadata):
+            async for chunk in chunks:
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
         except Exception as exc:  # never leave the client hanging on an open stream
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"

@@ -52,7 +52,7 @@ from sklearn.metrics import (  # noqa: E402
 
 from config import FEATURES_PARQUET, MODELS, REPORTS, ensure_dirs  # noqa: E402
 from features import feature_names  # noqa: E402
-from split import grouped_split, xy  # noqa: E402
+from split import dataset_splits, xy  # noqa: E402
 
 SIZE_FEATURES = {"pkg_n_files", "pkg_loc", "pkg_n_py_files", "pkg_loc_per_file"}
 
@@ -183,7 +183,7 @@ def main() -> int:
         return 1
 
     cols = feature_names()
-    _, test_df = grouped_split(df)
+    test_df = dataset_splits(df).test
     X_te, y_te = xy(test_df, cols)
     pool = test_df["pool"].to_numpy()
 
@@ -201,6 +201,7 @@ def main() -> int:
         evals.append(evaluate_model("LightGBM (features)", y_te, prob, pool,
                                     art["threshold"], latency))
         curves["LightGBM (features)"] = (y_te, prob)
+        gbdt_prob, gbdt_thr = prob, art["threshold"]
     else:
         print(f"[warn] {gbdt_path} not found -- run train_gbdt.py")
 
@@ -212,16 +213,23 @@ def main() -> int:
             art = pickle.load(fh)
         with np.load(cache_path) as z:
             cache = {k: z[k] for k in z.files}
-        E = np.vstack([
-            cache.get(f"{p}@{v}", np.zeros(art["dim"], np.float32))
-            for p, v in zip(test_df["package"], test_df["version"])
-        ])
+        # Model B has only embedded the packages it was trained with. Scoring
+        # the rest as zero vectors would be unfair to it, so the head-to-head
+        # runs on the packages both models can see.
+        has = np.array([f"{p}@{v}" in cache
+                        for p, v in zip(test_df["package"], test_df["version"])])
+        print(f"[B] {int(has.sum())} of {len(has)} test packages have embeddings")
+        E = np.vstack([cache[f"{p}@{v}"] for p, v in
+                       zip(test_df["package"][has], test_df["version"][has])])
         t0 = time.perf_counter()
         prob = art["head"].predict_proba(art["scaler"].transform(E))[:, 1]
         latency = (time.perf_counter() - t0) / max(len(E), 1) * 1000
-        evals.append(evaluate_model("Embeddings + LR", y_te, prob, pool,
-                                    art["threshold"], latency))
-        curves["Embeddings + LR"] = (y_te, prob)
+        evals.append(evaluate_model("Embeddings + LR (embedded subset)", y_te[has], prob,
+                                    pool[has], art["threshold"], latency))
+        curves["Embeddings + LR (embedded subset)"] = (y_te[has], prob)
+        if "gbdt_prob" in locals():
+            evals.append(evaluate_model("LightGBM (embedded subset)", y_te[has],
+                                        gbdt_prob[has], pool[has], gbdt_thr, 0.0))
     else:
         print(f"[warn] {embed_path} not found -- run train_embed.py")
 

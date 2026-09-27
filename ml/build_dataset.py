@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -35,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from acquire_benign import fetch_top_packages, normalise
 from config import BENIGN_DIR, FEATURES_PARQUET, MALICIOUS_DIR, RAW, ensure_dirs
 from features import extract_features, feature_names
+from split import merge_duplicate_groups
 
 # The typosquat feature compares against this many top names. More is slower
 # (it is an edit-distance sweep per package) with rapidly diminishing returns.
@@ -59,9 +61,17 @@ def _one(args: tuple[dict, str, set[str]]) -> dict | None:
         "label": row["label"],
         "pool": row.get("pool") or "malicious",
         "intent_class": row.get("intent_class", ""),
+        "source": row.get("source", "pypi"),
+        "reported": row.get("reported") or _date_in_path(row.get("path", "")),
         "group": normalise(row["package"]),
         **feats,
     }
+
+
+def _date_in_path(path: str) -> str:
+    """DataDog sample folders start with the date the sample was caught."""
+    m = re.search(r"_(\d{4}-\d{2}-\d{2})-", path)
+    return m.group(1) if m else ""
 
 
 def load_index(path: Path, base: Path) -> list[tuple[dict, str]]:
@@ -106,6 +116,7 @@ def main() -> int:
     popular = {normalise(p) for p in fetch_top_packages()[:N_POPULAR_FOR_TYPOSQUAT]}
 
     jobs = (load_index(RAW / "malicious_index.json", MALICIOUS_DIR)
+            + load_index(RAW / "malregistry_index.json", MALICIOUS_DIR)
             + load_index(RAW / "benign_index.json", BENIGN_DIR))
     if not jobs:
         print("[error] nothing to build -- no packages have been acquired yet")
@@ -134,8 +145,15 @@ def main() -> int:
         raise RuntimeError(f"features missing from the matrix: {missing}")
     df[cols] = df[cols].fillna(0.0).astype("float32")
 
-    meta = ["package", "version", "label", "pool", "intent_class", "group"]
+    meta = ["package", "version", "label", "pool", "intent_class", "source", "reported", "group"]
     df = df[meta + cols]
+
+    # Campaigns upload one payload under hundreds of names. Grouping on name
+    # alone would let those copies straddle the train/test split.
+    n_names = df["group"].nunique()
+    df["group"] = merge_duplicate_groups(df, cols)
+    print(f"[groups] {n_names} names -> {df['group'].nunique()} groups after merging "
+          f"identical-behaviour packages (largest: {df['group'].value_counts().iloc[0]})")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(args.out, index=False)

@@ -173,6 +173,63 @@ for p in paths:
     assert f["call_try_except_pass"] >= 1, "silent except:pass not detected"
 
 
+
+HIDDEN_IMPORT = '''
+import base64
+
+def report():
+    try:
+        _o = __import__(''.join(map(chr, [111, 115])))
+        home = _o.path.expanduser('~')
+        for e in _o.listdir(home):
+            name = base64.b85decode(e.encode()).decode()
+            data = open(name, 'rb').read()
+        _o.remove(home)
+    except Exception:
+        pass
+'''
+
+
+def test_hidden_import_by_char_codes(tmp_path):
+    """`__import__(''.join(map(chr, [111, 115])))` is `import os`, disguised."""
+    f = extract_features(build(tmp_path, {"setup.py": BENIGN_SETUP, "lib/util.py": HIDDEN_IMPORT}))
+    assert f["call_computed_import"] == 1
+    assert f["call_obfuscated_import"] == 1
+    assert f["obf_char_code_build"] >= 1
+
+
+def test_plain_imports_are_not_hidden(tmp_path):
+    code = "import importlib\nm = importlib.import_module('json')\nx = __import__('os')\n" \
+           "s = 'os'\nitems = [1]\nitems.remove(1)\n"
+    f = extract_features(build(tmp_path, {"setup.py": BENIGN_SETUP, "lib/m.py": code}))
+    assert f["call_computed_import"] == 0
+    assert f["call_obfuscated_import"] == 0
+    assert f["obf_char_code_build"] == 0
+
+
+def test_plugin_loader_import_is_computed_but_not_obfuscated(tmp_path):
+    code = "import importlib\ndef load(name):\n    return importlib.import_module('plugins.' + name)\n"
+    f = extract_features(build(tmp_path, {"setup.py": BENIGN_SETUP, "lib/m.py": code}))
+    assert f["call_computed_import"] == 1
+    assert f["call_obfuscated_import"] == 0
+
+
+def test_worst_file_is_not_diluted_by_padding(tmp_path):
+    """One bad file inside a big, clean library still stands out."""
+    padding = {f"lib/mod{i}.py": BENIGN_MODULE * 20 for i in range(40)}
+    small = extract_features(build(tmp_path / "a", {"setup.py": BENIGN_SETUP,
+                                                   "lib/util.py": HIDDEN_IMPORT}))
+    padded = extract_features(build(tmp_path / "b", {"setup.py": BENIGN_SETUP,
+                                                    "lib/util.py": HIDDEN_IMPORT, **padding}))
+    clean = extract_features(build(tmp_path / "c", {"setup.py": BENIGN_SETUP, **padding}))
+
+    # hidden name, home, fs walk, decode, silent except
+    assert padded["worst_file_categories"] >= 5
+    assert padded["worst_file_categories"] == small["worst_file_categories"]
+    assert padded["worst_file_suspicious_per_kloc"] == small["worst_file_suspicious_per_kloc"]
+    assert padded["decode_calls_per_kloc"] < small["decode_calls_per_kloc"] / 10
+    assert clean["worst_file_categories"] == 0
+
 def test_typosquat_distance(tmp_path):
     """A one-character-off name should sit in the typosquat danger zone."""
     root = build(tmp_path, {"setup.py": BENIGN_SETUP})
@@ -261,3 +318,41 @@ def test_pipeline_and_build_metadata_do_not_count_as_files(tmp_path):
     }))
     assert wrapped["pkg_n_files"] == plain["pkg_n_files"] == 2
     assert wrapped["pkg_py_file_ratio"] == plain["pkg_py_file_ratio"]
+
+
+def test_identical_behaviour_under_different_names_shares_a_group():
+    """A campaign's copies must land on one side of the split."""
+    import pandas as pd
+    from split import merge_duplicate_groups
+    df = pd.DataFrame({
+        "group": ["evil-a", "evil-b", "evil-b", "other", "clean"],
+        "f1": [1.0, 1.0, 2.0, 2.0, 9.0],        # evil-a == evil-b(v1); evil-b(v2) == other
+        "pkg_typosquat_distance": [1.0, 3.0, 4.0, 2.0, 4.0],   # ignored: name-dependent
+    })
+    groups = merge_duplicate_groups(df, ["f1", "pkg_typosquat_distance"]).tolist()
+    assert groups == ["evil-a", "evil-a", "evil-a", "evil-a", "clean"]
+
+
+def test_plain_open_is_not_deserialisation(tmp_path):
+    """Bare `open`/`loads` are the builtin and json, not shelve and pickle."""
+    code = "import json\nfrom json import loads\nwith open('a.txt') as f:\n    d = loads(f.read())\n"
+    f = extract_features(build(tmp_path, {"setup.py": BENIGN_SETUP, "lib/m.py": code}))
+    assert f["call_deserialize"] == 0
+    evil = "import pickle\nfrom base64 import b64decode\npickle.loads(b64decode('eA=='))\n"
+    g = extract_features(build(tmp_path / "e", {"setup.py": BENIGN_SETUP, "lib/m.py": evil}))
+    assert g["call_deserialize"] == 1 and g["decode_calls"] == 1
+
+
+def test_file_scan_points_at_the_hidden_file(tmp_path):
+    """The per-file scan ranks the payload file first, with its exact lines."""
+    from file_scan import scan_package
+    padding = {f"lib/mod{i}.py": BENIGN_MODULE * 5 for i in range(10)}
+    root = build(tmp_path, {"setup.py": BENIGN_SETUP, "lib/util.py": HIDDEN_IMPORT,
+                            "tests/test_x.py": HIDDEN_IMPORT, **padding})
+    scan = scan_package(root)
+    top = scan["files"][0]
+    assert top["path"] == "lib/util.py"                 # real module beats the test copy
+    cats = {c["id"] for c in top["categories"]}
+    assert {"hidden_name", "home", "fs_walk", "decode", "silent_except"} <= cats
+    line = next(h for h in top["hits"] if h["category"] == "hidden_name")
+    assert "__import__" in line["code"] and line["line"] == 6

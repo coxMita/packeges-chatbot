@@ -5,9 +5,11 @@ build the training set. Reimplementing extraction for serving is the classic way
 to ship a model whose inputs quietly drift from what it was trained on.
 
 The output carries `evidence`: the top SHAP contributions, each with a
-human-readable description from `FEATURE_DESCRIPTIONS`. That list is the only
-thing the LLM is given. It cannot see the source, so it cannot form its own
-opinion about the package -- it can only explain the model's.
+human-readable description from `FEATURE_DESCRIPTIONS` and a `training` block
+saying how common the observed value was among the malicious and the benign
+packages the model learned from. That list is what the LLM is given. It cannot
+see the source, so it cannot form its own opinion about the package -- it can
+only explain the model's.
 """
 
 from __future__ import annotations
@@ -32,12 +34,52 @@ TOP_EVIDENCE = 8
 MIN_ABS_SHAP = 1e-3
 
 
+class TrainingReference:
+    """Per-class distribution of every feature over the real training packages
+    (written by ml/train_gbdt.py), to say how the observed value compares."""
+
+    def __init__(self, path: Path) -> None:
+        self.arrays: dict[str, np.ndarray] = {}
+        if path.exists():
+            with np.load(path) as z:
+                self.arrays = {k: z[k] for k in z.files}
+
+    def context(self, feature: str, value: float) -> dict[str, Any] | None:
+        mal = self.arrays.get(f"malicious/{feature}")
+        ben = self.arrays.get(f"benign/{feature}")
+        if mal is None or ben is None or not len(mal) or not len(ben):
+            return None
+        # Compare on the side of the distribution the value sits on: "at most 3
+        # files" is the informative tail for a tiny package, "at least 12
+        # subprocess calls" for a busy one.
+        median = float(np.median(np.concatenate([mal, ben])))
+        tail = "le" if value <= median else "ge"
+
+        def share(a: np.ndarray) -> float:
+            if tail == "le":
+                return float(np.searchsorted(a, value, side="right") / len(a))
+            return float(1 - np.searchsorted(a, value, side="left") / len(a))
+
+        m, b = share(mal), share(ben)
+        return {
+            "tail": tail,
+            "malicious_share": round(m, 4),
+            "benign_share": round(b, 4),
+            # How many times more common among malware; capped so a value never
+            # seen in benign training data does not read as "infinitely" so.
+            "ratio": round(min(m / max(b, 1e-3), 999.0), 2),
+            "n_malicious": int(len(mal)),
+            "n_benign": int(len(ben)),
+        }
+
+
 @dataclass
 class Evidence:
     feature: str
     value: float
     contribution: float          # SHAP value: >0 pushes toward malicious
     description: str
+    training: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,6 +88,7 @@ class Evidence:
             "contribution": round(float(self.contribution), 4),
             "direction": "malicious" if self.contribution > 0 else "benign",
             "description": self.description,
+            "training": self.training,
         }
 
 
@@ -81,6 +124,7 @@ class Scorer:
         self.feature_names = feature_names()
         self.gbdt: dict | None = None
         self.explainer = None
+        self.reference = TrainingReference(models_dir / "feature_reference.npz")
 
         gbdt_path = models_dir / "gbdt.pkl"
         if gbdt_path.exists():
@@ -142,6 +186,7 @@ class Scorer:
                 value=feats[name],
                 contribution=float(sv),
                 description=describe(name),
+                training=self.reference.context(name, feats[name]),
             )
             for name, sv in ranked
             if abs(sv) >= MIN_ABS_SHAP

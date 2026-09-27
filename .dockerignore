@@ -1,0 +1,7 @@
+# Build context for backend/Dockerfile is the repo root. Keep it to source only:
+# data/ holds ~40GB of package samples (including live malware) and is mounted
+# read-only at runtime instead; model artifacts are mounted too.
+**
+!backend/*.py
+!backend/requirements.txt
+!ml/*.py

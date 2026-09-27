@@ -38,6 +38,22 @@ model's reasoning** in plain English.
 The verdict is deterministic and takes ~1ms. The explanation streams separately, so
 the UI paints the result immediately rather than waiting on a 4B model on CPU.
 
+**Follow-up questions.** After a result, the same box takes questions: "why is it
+suspicious?", "is a missing README really a red flag?". Input that names a package
+(`flask`, `flask==3.0.0`, `check flask`, `pip install flask`, `is flask safe?`,
+`what about flask?`) is analysed; anything else ("is it safe?", "which file should
+I read?") is answered by the LLM about the **most recently analysed package**, from
+the evidence of the last three analyses plus the recent conversation
+(`POST /api/chat`). The UI shows which package follow-ups refer to.
+
+**Training-data context.** Every evidence signal is set against the training
+data. The UI draws the share of malicious and benign training packages with the
+same value or beyond, for example "decoded data passed to exec: 4% of malware, 0.02% of
+benign → 39× more common in malware". The explanation cites these shares and names
+the suspect file, the calls and their line numbers. The LLM gets call names only,
+never source lines. The same rules apply: it still never sees source
+code and cannot override a verdict. Answers take ~1 minute on CPU.
+
 ---
 
 ## Quick start
@@ -52,6 +68,7 @@ python ml/train_gbdt.py             # Model A  (seconds)
 python ml/train_embed.py            # Model B  (~2.5h on 8 CPU threads, cached, resumable)
 python ml/evaluate.py               # head-to-head → ml/reports/comparison.md
 python ml/calibrate.py              # tiers + "chance it is really malware"
+python ml/report.py                 # val / test / future / live PyPI → ml/reports/performance.md
 
 ollama serve &                      # local LLM for explanations
 ollama pull qwen3.5:4b
@@ -61,6 +78,44 @@ ollama pull qwen3.5:4b
 
 Everything except the LLM explanation works without Ollama running — the verdict and
 evidence come from the classifier.
+
+### Docker
+
+Three containers: `frontend` (nginx serving the built UI and proxying `/api`),
+`backend` (FastAPI, models loaded once) and `ollama` (the local LLM).
+
+```bash
+python ml/train_gbdt.py && python ml/calibrate.py   # artifacts the backend mounts
+docker compose up -d --build                        # → http://localhost:8080
+docker compose logs -f ollama                       # first start pulls qwen3.5:4b (~3.4 GB)
+```
+
+- Only the UI is published, on `127.0.0.1:${APP_PORT:-8080}`. The API and the LLM sit
+  on internal networks (`web`, `llm`).
+- `ml/models/` and `data/` are bind-mounted **read-only**. `data/` is optional: without
+  it the similarity second opinion is off and everything else works.
+- Every container runs as a non-root user with `cap_drop: ALL` and
+  `no-new-privileges`, with CPU and memory limits. The frontend and backend
+  also get a read-only root filesystem, with a tmpfs `/tmp` for unpacking packages.
+- The CodeBERTa encoder weights are baked into the backend image, which runs with
+  `HF_HUB_OFFLINE=1`.
+- The backend starts without waiting for the model download; verdicts work
+  immediately and explanations start once Ollama reports healthy.
+- NVIDIA GPU: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`.
+- Settings via `.env`: `OLLAMA_MODEL`, `APP_PORT`, `APP_BIND`, `OLLAMA_VERSION`.
+
+### Diagrams
+
+draw.io files at the repo root (open in [app.diagrams.net](https://app.diagrams.net)
+or the VS Code Draw.io extension):
+
+| File | Shows |
+|---|---|
+| `architecture.drawio` | software components: UI, nginx, API modules, LLM, artifacts, offline pipeline |
+| `deployment.drawio` | Docker Compose deployment: containers, networks, volumes, ports, egress |
+| `sequence-analysis.drawio` | analyse → explain (SSE) → follow-up question |
+| `ml-pipeline.drawio` | data sources, 70/15/15 split + future holdout, training, calibration, evaluation |
+| `chat-routing.drawio` | how a chat message is routed to analysis or to a follow-up answer |
 
 ---
 
@@ -141,8 +196,44 @@ scored on the same grouped split.
 
 ## Results
 
+18,871 packages (11,537 malicious from DataDog and pypi_malregistry, 4,707 popular,
+2,627 obscure benign). They are split **70 / 15 / 15**, grouped by package family and
+stratified by class. Malware first reported on or after 2025-06-01, from families never
+seen earlier, is held outside all three sets. Full tables:
+[`ml/reports/performance.md`](ml/reports/performance.md) (`python ml/report.py`).
+
+| Set | n (malware) | Accuracy | Balanced acc. | Precision | Recall | FPR | PR-AUC |
+|---|---|---|---|---|---|---|---|
+| Validation (15%) | 2,673 (1,574) | 97.5% | 97.8% | 99.5% | 96.2% | 0.6% | 0.999 |
+| **Test (15%)** | 2,648 (1,548) | **96.3%** | **96.8%** | **99.5%** | **94.3%** | **0.7%** | 0.997 |
+| Future malware (outside) | 1,225 (1,225) | — | — | — | 63.8% | — | — |
+| Live PyPI malware (outside) | 27 (27) | — | — | — | 11.1% | — | — |
+| Live PyPI benign, random (outside) | 160 (0) | 98.8% | — | — | — | 1.2% | — |
+| Live PyPI benign, mid-popular (outside) | 60 (0) | 100% | — | — | — | 0.0% | — |
+
+Classifier (Model A) at its 0.82 threshold. The three-tier verdict shown in the chat
+catches more, because "suspicious" also counts:
+
+| Set | Malicious tier | Suspicious | Clean |
+|---|---|---|---|
+| Test: benign / malware | 4 / 1,454 | 13 / 36 | 1,083 / 58 |
+| Future malware | 763 | 124 | 338 |
+| Live malware | 3 | 4 | 20 |
+| Live benign | 1 | 3 | 216 |
+
+**How to read this.** On data like the training data the detector is very good: 94%
+recall at 0.7% false alarms on held-out families. On malware families it has never seen,
+it catches about two thirds (72% of future malware reach suspicious or malicious). On
+malware that is **still live on PyPI today**, which is by selection the malware that has
+evaded detection so far, it catches 7 of 27. Only new training data fixes that. The
+live "benign" sample is unverified: random PyPI projects, excluding every known-malicious
+name. Its one "malicious" result (`my-tic-tac-toe`) may be a false alarm or undetected
+malware.
+
+<details><summary>Earlier analysis on the 80/20, DataDog-only dataset (kept for the record)</summary>
+
 9,864 packages (2,530 malicious, 4,707 popular, 2,627 obscure), grouped split,
-2,012 held out. Full tables in [`ml/reports/comparison.md`](ml/reports/comparison.md).
+2,012 held out.
 
 | Slice | Model | PR-AUC | Precision | Recall | FPR |
 |---|---|---|---|---|---|
@@ -151,9 +242,7 @@ scored on the same grouped split.
 | obscure | **A — LightGBM** | **0.989** | **1.000** | 0.894 | **0.0%** |
 | obscure | B — embeddings | 0.968 | 0.945 | 0.892 | 5.6% |
 
-Model A wins on every metric, trains in under a second against Model B's ~2.5-hour
-CPU embedding pass, and is the only one whose decisions can be explained. Model B was
-expected to be the more robust of the two; it was not (see below).
+</details>
 
 ### What the headline hides
 
@@ -251,17 +340,27 @@ ml/
   acquire_benign.py    popular + hard-negative pools, OSSF veto
   features.py          64-feature static extractor  ← core
   build_dataset.py     → features.parquet
-  split.py             shared grouped split
+  split.py             shared 70/15/15 grouped split + future holdout
   train_gbdt.py        Model A
   train_embed.py       Model B
   evaluate.py          head-to-head, three slices
+  calibrate.py         tiers + calibrated chance (fit on validation) → models/calibration.json
+  report.py            validation / test / future / live-PyPI performance report
   tests/
 backend/
   fetch.py             PyPI resolution + safe unpack
   predict.py           scoring + SHAP evidence
-  llm.py               Ollama; explains, never decides
-  main.py              FastAPI: /analyze, /explain (SSE), /health
+  similarity.py        nearest known packages by code embedding
+  assess.py            three-tier verdict + calibrated chance
+  llm.py               Ollama; explains and answers follow-ups, never decides
+  main.py              FastAPI: /analyze, /explain + /chat (SSE, POST), /health
+  Dockerfile           multi-stage, CPU torch, encoder baked in, non-root
+frontend/Dockerfile    node build → nginx-unprivileged (nginx/ holds the proxy + CSP)
+ollama/                pinned Ollama image + pull-on-first-start entrypoint
+docker-compose.yml     the three services; docker-compose.gpu.yml for NVIDIA
+*.drawio               architecture, deployment, sequence, ML pipeline, routing
 frontend/              React + Vite + TypeScript chat UI
+  src/route.ts         package to analyse, or follow-up question?
 ```
 
 ## Limitations
@@ -274,8 +373,8 @@ frontend/              React + Vite + TypeScript chat UI
   genuinely new packing scheme will evade it. Model B was meant to cover that gap but
   in practice misses the same padded packages Model A does.
 - **Padding evades detection.** Recall on malicious packages with 11+ files is 38%.
-- **New malware families are mostly missed.** 2 of 7 recent OSSF reports reach
-  "suspicious"; none reach "malicious". Only new training data fixes this.
+- **New malware families are mostly missed.** 7 of 27 OSSF-reported packages still
+  live on PyPI reach suspicious or malicious. Only new training data fixes this.
 - **The explainer is a 4B model.** It stays within the evidence but can still word
   things clumsily (it once called a 2-file package's file count "unusually high").
 - Trained on packages caught between roughly 2018 and 2026.

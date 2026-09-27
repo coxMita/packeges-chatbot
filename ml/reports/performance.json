@@ -1,0 +1,190 @@
+{
+  "threshold": 0.82,
+  "review_threshold": 0.615251478568913,
+  "sizes": {
+    "train": 12325,
+    "val": 2673,
+    "test": 2648,
+    "future": 1225
+  },
+  "sets": {
+    "val": {
+      "classifier": {
+        "n": 2673,
+        "n_malicious": 1574,
+        "accuracy": 0.974934530490086,
+        "balanced_accuracy": 0.9777555661667705,
+        "precision": 0.9953977646285339,
+        "recall": 0.9618805590851334,
+        "f1": 0.9783521809369952,
+        "fpr": 0.006369426751592357,
+        "roc_auc": 0.9979919945705521,
+        "pr_auc": 0.9987539742306173,
+        "tp": 1514,
+        "fp": 7,
+        "tn": 1092,
+        "fn": 60
+      },
+      "tiers": {
+        "malicious": {
+          "benign": 2,
+          "malware": 1511
+        },
+        "suspicious": {
+          "benign": 11,
+          "malware": 34
+        },
+        "clean": {
+          "benign": 1086,
+          "malware": 29
+        }
+      }
+    },
+    "test": {
+      "classifier": {
+        "n": 2648,
+        "n_malicious": 1548,
+        "accuracy": 0.9633685800604229,
+        "balanced_accuracy": 0.9676168663377965,
+        "precision": 0.994546693933197,
+        "recall": 0.9425064599483204,
+        "f1": 0.9678275290215588,
+        "fpr": 0.007272727272727273,
+        "roc_auc": 0.9951873385012919,
+        "pr_auc": 0.9971311015922144,
+        "tp": 1459,
+        "fp": 8,
+        "tn": 1092,
+        "fn": 89
+      },
+      "tiers": {
+        "malicious": {
+          "benign": 4,
+          "malware": 1454
+        },
+        "suspicious": {
+          "benign": 13,
+          "malware": 36
+        },
+        "clean": {
+          "benign": 1083,
+          "malware": 58
+        }
+      }
+    },
+    "future": {
+      "classifier": {
+        "n": 1225,
+        "n_malicious": 1225,
+        "accuracy": 0.6383673469387755,
+        "balanced_accuracy": 0.6383673469387755,
+        "precision": 1.0,
+        "recall": 0.6383673469387755,
+        "f1": 0.7792725460886896,
+        "fpr": NaN,
+        "roc_auc": NaN,
+        "pr_auc": NaN,
+        "tp": 782,
+        "fp": 0,
+        "tn": 0,
+        "fn": 443
+      },
+      "tiers": {
+        "malicious": {
+          "benign": 0,
+          "malware": 763
+        },
+        "suspicious": {
+          "benign": 0,
+          "malware": 124
+        },
+        "clean": {
+          "benign": 0,
+          "malware": 338
+        }
+      }
+    },
+    "live": {
+      "classifier": {
+        "n": 247,
+        "n_malicious": 27,
+        "accuracy": 0.8947368421052632,
+        "balanced_accuracy": 0.5510101010101011,
+        "precision": 0.6,
+        "recall": 0.1111111111111111,
+        "f1": 0.18750000000000003,
+        "fpr": 0.00909090909090909,
+        "roc_auc": 0.8282828282828283,
+        "pr_auc": 0.5109511943239112,
+        "tp": 3,
+        "fp": 2,
+        "tn": 218,
+        "fn": 24
+      },
+      "tiers": {
+        "malicious": {
+          "benign": 1,
+          "malware": 3
+        },
+        "suspicious": {
+          "benign": 3,
+          "malware": 4
+        },
+        "clean": {
+          "benign": 216,
+          "malware": 20
+        }
+      },
+      "by_group": {
+        "live \u00b7 live-malware": {
+          "n": 27,
+          "n_malicious": 27,
+          "accuracy": 0.1111111111111111,
+          "balanced_accuracy": 0.1111111111111111,
+          "precision": 1.0,
+          "recall": 0.1111111111111111,
+          "f1": 0.19999999999999998,
+          "fpr": NaN,
+          "roc_auc": NaN,
+          "pr_auc": NaN,
+          "tp": 3,
+          "fp": 0,
+          "tn": 0,
+          "fn": 24
+        },
+        "live \u00b7 live-benign-random": {
+          "n": 160,
+          "n_malicious": 0,
+          "accuracy": 0.9875,
+          "balanced_accuracy": 0.9875,
+          "precision": 0.0,
+          "recall": NaN,
+          "f1": 0.0,
+          "fpr": 0.0125,
+          "roc_auc": NaN,
+          "pr_auc": NaN,
+          "tp": 0,
+          "fp": 2,
+          "tn": 158,
+          "fn": 0
+        },
+        "live \u00b7 live-benign-midpop": {
+          "n": 60,
+          "n_malicious": 0,
+          "accuracy": 1.0,
+          "balanced_accuracy": 1.0,
+          "precision": NaN,
+          "recall": NaN,
+          "f1": 0.0,
+          "fpr": 0.0,
+          "roc_auc": NaN,
+          "pr_auc": NaN,
+          "tp": 0,
+          "fp": 0,
+          "tn": 60,
+          "fn": 0
+        }
+      }
+    }
+  }
+}
