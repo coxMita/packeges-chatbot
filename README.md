@@ -417,7 +417,3 @@ frontend/              React + Vite + TypeScript chat UI
 - **The explainer is a 4B model.** It stays within the evidence but can still word
   things clumsily (it once called a 2-file package's file count "unusually high").
 - Trained on packages caught between roughly 2018 and 2026.
-
-## License
-
-Apache-2.0
