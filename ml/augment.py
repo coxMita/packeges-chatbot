@@ -12,6 +12,7 @@ malicious code from a training sample, injected one of three ways:
   append   payload appended to an existing module (index-forum's shape)
   setup    payload appended to setup.py, so it runs at install time
   module   payload dropped in as a new module next to the host's code
+  init     payload appended to a package __init__.py, so it runs on import
 
 Every malicious sample has a *control*: the same host and the same injection,
 but with code from another benign package, labelled benign. Without controls
@@ -55,7 +56,7 @@ OUT = PROCESSED / "augmented.parquet"
 SCRATCH = CACHE / "augment_tmp"
 MAX_DONOR_CHARS = 20_000
 HOST_FILES = (5, 300)        # inject into real projects, but not giants
-KINDS = ("append", "setup", "module")
+KINDS = ("append", "setup", "module", "init")
 RISKY_CONTROL_SHARE = 0.75   # of benign controls, drawn from risky-API donors
 
 
@@ -81,7 +82,11 @@ def inject(host: Path, work: Path, code: str, kind: str, rng: random.Random) -> 
     py = [p for p in iter_python_files(work) if p.name != "setup.py"]
     setup = [p for p in iter_python_files(work) if p.name == "setup.py"]
 
-    if kind == "setup" and setup:
+    inits = [p for p in py if p.name == "__init__.py"]
+    if kind == "init" and inits:
+        target = rng.choice(inits)
+        _replace(target, (read_text(target) or "") + "\n\n" + code + "\n")
+    elif kind == "setup" and setup:
         target = setup[0]
         _replace(target, (read_text(target) or "") + "\n\n" + code + "\n")
     elif kind == "append" and py:
@@ -122,7 +127,7 @@ def _one(job: dict) -> dict | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--n", type=int, default=2500, help="malicious samples (plus as many controls)")
+    ap.add_argument("--n", type=int, default=3500, help="malicious samples (plus as many controls)")
     ap.add_argument("--workers", type=int, default=6)
     args = ap.parse_args()
 

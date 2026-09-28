@@ -244,6 +244,11 @@ FILE_CATEGORIES = {
     "chmod": ("chmod_calls",),
     "silent_except": ("try_except_pass",),
 }
+# How strongly each kind points at malware when found in a file (as in
+# ml/file_scan.py); summed over the kinds present, maxed over files.
+DANGER_WEIGHTS = {"hidden_name": 4, "exec": 3, "process": 3, "network": 2, "deserialize": 2,
+                  "decode": 2, "chmod": 2, "dynamic_import": 1, "home": 1, "fs_walk": 1,
+                  "delete": 1, "env": 1, "silent_except": 1}
 # What counts toward a file's suspicious-call density. Walks, deletes and
 # swallowed exceptions are too common alone to count; they only add categories.
 DENSITY_FIELDS = ("exec_calls", "process_calls", "network_calls", "deserialize_calls",
@@ -605,6 +610,54 @@ def read_text(path: Path) -> str | None:
         return None
 
 
+RISKY_TOKENS = re.compile(r"subprocess|os\.system|popen|exec\(|eval\(|b64decode|urlopen|"
+                         r"urlretrieve|requests\.(get|post)|socket\.|marshal|__import__|chmod|"
+                         r"startfile|decompress|fromhex|getenv|environ")
+MAX_EXTRA_PY_FILES = 20_000
+MAX_EXTRA_BYTES = 256 * 1024 * 1024
+
+
+def _add_behaviour(beh: dict, file_cats: list[str], tree: ast.Module, path: Path, root: Path) -> None:
+    import behaviour
+    beh["worst_file_danger"] = max(beh["worst_file_danger"],
+                                   sum(DANGER_WEIGHTS.get(c, 1) for c in file_cats))
+    beh["n_danger_files"] += len(file_cats) >= 3
+    try:
+        fb = behaviour.analyse_file(tree, str(path.relative_to(root)), path.name == "setup.py")
+    except RecursionError:
+        return
+    for k, v in fb.items():
+        if k == "_auto_categories":
+            beh["autorun_categories"] = max(beh["autorun_categories"], v)
+        else:
+            beh[k] += v
+
+
+def _scan_beyond_cap(beh: dict, root: Path, done: set[Path]) -> None:
+    budget, n = MAX_EXTRA_BYTES, 0
+    for path in root.rglob("*.py"):
+        if path in done or not path.is_file():
+            continue
+        n += 1
+        if n > MAX_EXTRA_PY_FILES or budget <= 0:
+            break
+        text = read_text(path)
+        if not text or not RISKY_TOKENS.search(text):
+            continue
+        budget -= len(text)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = ast.parse(text)
+            acc = _Acc()
+            _Visitor(acc).visit(tree)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        counts = _counters(acc)
+        cats = [c for c, fields in FILE_CATEGORIES.items() if any(counts[f] for f in fields)]
+        _add_behaviour(beh, cats, tree, path, root)
+
+
 def extract_features(
     root: Path,
     package_name: str = "",
@@ -631,6 +684,11 @@ def extract_features(
     text_budget = MAX_TOTAL_TEXT_BYTES
     worst_categories = 0
     worst_density = 0.0
+
+    # Behaviour features (ml/behaviour.py): per file, then summed or pooled so
+    # a payload in one file of a large package is not averaged away.
+    import behaviour
+    beh: dict[str, float] = dict.fromkeys(behaviour.BEHAVIOUR_FEATURES, 0.0)
 
     for path in py_files:
         text = read_text(path)
@@ -666,8 +724,9 @@ def extract_features(
             continue
         n_parsed += 1
         delta = {k: v - before[k] for k, v in _counters(acc).items()}
-        worst_categories = max(worst_categories, sum(
-            1 for fields in FILE_CATEGORIES.values() if any(delta[f] for f in fields)))
+        file_cats = [cat for cat, fields in FILE_CATEGORIES.items() if any(delta[f] for f in fields)]
+        worst_categories = max(worst_categories, len(file_cats))
+        _add_behaviour(beh, file_cats, tree, path, root)
         file_loc = max(text.count("\n") + 1, MIN_DENSITY_LOC)
         worst_density = max(worst_density,
                             sum(delta[f] for f in DENSITY_FIELDS) * 1000 / file_loc)
@@ -677,6 +736,11 @@ def extract_features(
             for k, v in analyse_setup(tree).items():
                 setup_feats[k] = max(setup_feats[k], v) if k.endswith(
                     ("cmdclass", "subclass")) else setup_feats[k] + v
+
+    # Behaviour only, for Python files beyond the MAX_PY_FILES cap. A payload
+    # injected into one module of a 5,000-file library (telnyx 4.87.1) sits
+    # past any depth-first cap; a cheap token pre-filter keeps this fast.
+    _scan_beyond_cap(beh, root, set(py_files))
 
     all_files = [p for p in root.rglob("*")
                  if p.is_file() and not is_non_source_file(p)]
@@ -730,6 +794,8 @@ def extract_features(
 
     feats.update(text_signals(blobs))
     feats.update(string_signals(acc.string_literals))
+    beh.update(behaviour.scan_other_files(all_files, root))
+    feats.update({k: float(v) for k, v in beh.items()})
 
     # Normalised variants: raw counts scale with package size, so a 50k-line
     # project with 3 subprocess calls should not outrank a 40-line dropper with
@@ -835,6 +901,9 @@ def feature_names() -> list[str]:
 
 def describe(name: str) -> str:
     """Human-readable description of a feature, for the LLM explanation prompt."""
+    from behaviour import BEHAVIOUR_DESCRIPTIONS
+    if name in BEHAVIOUR_DESCRIPTIONS:
+        return BEHAVIOUR_DESCRIPTIONS[name]
     base = name.removesuffix("_per_kloc")
     desc = FEATURE_DESCRIPTIONS.get(name) or FEATURE_DESCRIPTIONS.get(base, name)
     if name.endswith("_per_kloc") and base in FEATURE_DESCRIPTIONS:

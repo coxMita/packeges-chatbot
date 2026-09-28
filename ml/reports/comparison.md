@@ -17,25 +17,25 @@ rather than behaviour.
 
 | model | n | ROC-AUC | PR-AUC | precision | recall | F1 | FPR |
 |---|---|---|---|---|---|---|---|
-| LightGBM (features) | 2648 | 0.9952 | 0.9971 | 0.9945 | 0.9425 | 0.9678 | 0.0073 |
-| Embeddings + LR (embedded subset) | 1589 | 0.9811 | 0.9781 | 0.9289 | 0.9346 | 0.9317 | 0.0318 |
-| LightGBM (embedded subset) | 1589 | 0.9922 | 0.9890 | 0.9827 | 0.9305 | 0.9559 | 0.0073 |
+| LightGBM (features) | 2648 | 0.9970 | 0.9982 | 0.9941 | 0.9767 | 0.9853 | 0.0082 |
+| Embeddings + LR (embedded subset) | 1459 | 0.9907 | 0.9824 | 0.8863 | 0.9608 | 0.9220 | 0.0399 |
+| LightGBM (embedded subset) | 1459 | 0.9900 | 0.9843 | 0.9744 | 0.9580 | 0.9661 | 0.0082 |
 
 ## Slice: `popular`
 
 | model | n | ROC-AUC | PR-AUC | precision | recall | F1 | FPR |
 |---|---|---|---|---|---|---|---|
-| LightGBM (features) | 2253 | 0.9962 | 0.9985 | 0.9979 | 0.9425 | 0.9694 | 0.0043 |
-| Embeddings + LR (embedded subset) | 1194 | 0.9825 | 0.9850 | 0.9601 | 0.9346 | 0.9472 | 0.0270 |
-| LightGBM (embedded subset) | 1194 | 0.9936 | 0.9934 | 0.9934 | 0.9305 | 0.9609 | 0.0043 |
+| LightGBM (features) | 2257 | 0.9982 | 0.9993 | 0.9993 | 0.9767 | 0.9879 | 0.0014 |
+| Embeddings + LR (embedded subset) | 1068 | 0.9927 | 0.9901 | 0.9475 | 0.9608 | 0.9541 | 0.0267 |
+| LightGBM (embedded subset) | 1068 | 0.9933 | 0.9915 | 0.9971 | 0.9580 | 0.9771 | 0.0014 |
 
 ## Slice: `obscure`
 
 | model | n | ROC-AUC | PR-AUC | precision | recall | F1 | FPR |
 |---|---|---|---|---|---|---|---|
-| LightGBM (features) | 1943 | 0.9934 | 0.9984 | 0.9966 | 0.9425 | 0.9688 | 0.0127 |
-| Embeddings + LR (embedded subset) | 884 | 0.9787 | 0.9871 | 0.9662 | 0.9346 | 0.9501 | 0.0405 |
-| LightGBM (embedded subset) | 884 | 0.9897 | 0.9932 | 0.9891 | 0.9305 | 0.9589 | 0.0127 |
+| LightGBM (features) | 1937 | 0.9948 | 0.9988 | 0.9947 | 0.9767 | 0.9856 | 0.0205 |
+| Embeddings + LR (embedded subset) | 748 | 0.9872 | 0.9887 | 0.9321 | 0.9608 | 0.9462 | 0.0639 |
+| LightGBM (embedded subset) | 748 | 0.9838 | 0.9882 | 0.9771 | 0.9580 | 0.9675 | 0.0205 |
 
 ## Inference cost
 
@@ -49,26 +49,26 @@ rather than behaviour.
 
 | # | feature | gain |
 |---|---|---|
-| 1 | `pkg_n_files` | 62589 |
-| 2 | `obf_max_line_len` | 16226 |
-| 3 | `pkg_loc` | 7639 |
-| 4 | `worst_file_categories` | 7536 |
-| 5 | `call_network_per_kloc` | 5392 |
-| 6 | `call_process_per_kloc` | 3695 |
-| 7 | `worst_file_suspicious_per_kloc` | 3278 |
-| 8 | `obf_ident_unique_ratio` | 2908 |
-| 9 | `obf_str_entropy_max` | 2420 |
-| 10 | `obf_long_line_count` | 2221 |
-| 11 | `pkg_has_readme` | 2213 |
-| 12 | `net_suspicious_host` | 1990 |
-| 13 | `obf_str_entropy_mean` | 1595 |
-| 14 | `obf_str_len_max` | 1501 |
-| 15 | `decode_then_exec` | 1497 |
-| 16 | `obf_str_len_mean` | 1376 |
-| 17 | `install_net_at_toplevel` | 1272 |
-| 18 | `call_dunder_access` | 1188 |
-| 19 | `pkg_n_py_files` | 1181 |
-| 20 | `call_suspicious_import` | 1152 |
+| 1 | `pkg_n_files` | 49141 |
+| 2 | `pkg_loc` | 12937 |
+| 3 | `autorun_categories` | 7932 |
+| 4 | `call_network_per_kloc` | 6255 |
+| 5 | `worst_file_danger` | 3819 |
+| 6 | `worst_file_categories` | 3320 |
+| 7 | `pkg_has_readme` | 3272 |
+| 8 | `obf_ident_unique_ratio` | 2696 |
+| 9 | `worst_file_suspicious_per_kloc` | 1614 |
+| 10 | `obf_max_line_len` | 1592 |
+| 11 | `obf_str_len_max` | 1537 |
+| 12 | `call_process_per_kloc` | 1402 |
+| 13 | `obf_str_entropy_mean` | 1329 |
+| 14 | `pkg_py_file_ratio` | 1192 |
+| 15 | `net_suspicious_host` | 1163 |
+| 16 | `pkg_typosquat_distance` | 1129 |
+| 17 | `decode_then_exec` | 1113 |
+| 18 | `install_hook_subclass` | 973 |
+| 19 | `obf_str_entropy_max` | 949 |
+| 20 | `call_suspicious_import` | 939 |
 
 > **Leakage warning.** A raw size feature ranks in the top 2 by
 > gain, which suggests the model is partly learning 'small package

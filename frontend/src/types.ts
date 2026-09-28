@@ -73,6 +73,7 @@ export interface Assessment {
   prior_high: number
   basis: string
   novel_malware_caught: string
+  has_capability?: boolean
 }
 
 export interface ScanHit {
@@ -100,6 +101,13 @@ export interface FileScan {
   files: ScannedFile[]
 }
 
+/** A concrete malicious capability found in the code (ml/behaviour.py). */
+export interface Capability {
+  feature: string
+  count: number
+  description: string
+}
+
 export interface AnalysisResult {
   package: string
   version: string
@@ -112,6 +120,7 @@ export interface AnalysisResult {
   model_agreement: string | null
   embed_probability: number | null
   evidence: Evidence[]
+  capabilities?: Capability[]
   similarity: Similarity | null
   assessment: Assessment | null
   file_scan?: FileScan | null

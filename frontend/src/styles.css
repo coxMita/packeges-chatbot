@@ -480,6 +480,17 @@ button { font: inherit; letter-spacing: inherit; color: inherit; }
 .train-caption { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); margin-top: 2px; }
 .train-caption b { font-weight: 600; color: var(--text); }
 
+/* ---- capabilities ---- */
+
+.caps { display: flex; flex-direction: column; gap: 2px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 0.5px solid var(--separator); font-size: 14px; }
+.cap:last-child { border-bottom: 0; }
+.cap-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-3); transform: translateY(-1px); }
+.cap-dot.malicious { background: var(--red); }
+.cap-dot.suspicious { background: var(--orange); }
+.cap-desc { flex: 1; }
+.cap-count { font: 12px var(--mono); color: var(--text-3); }
+
 /* ---- per-file scan ---- */
 
 .scan { display: flex; flex-direction: column; gap: 10px; }

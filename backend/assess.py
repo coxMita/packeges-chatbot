@@ -34,11 +34,11 @@ PRIOR_HIGH = 0.10
 SUSPICIOUS_CHANCE = 50.0
 EPS = 1e-4
 
-# Measured, not modelled (ml/report.py, live set): the calibrator only knows
-# malware that resembles the training data. Of 27 OSSF-reported malware
-# packages absent from the dataset and still downloadable from PyPI, 3 reach
-# the malicious tier and 4 suspicious; 20 read clean.
-NOVEL_MALWARE_CAUGHT = "7 of 27"
+# Measured, not modelled (ml/report.py, live set): of 27 OSSF-reported malware
+# packages absent from the dataset and still downloadable from PyPI -- malware
+# that has so far evaded removal -- 7 reach malicious and 2 suspicious. Several
+# of the rest show no payload in the version still published.
+NOVEL_MALWARE_CAUGHT = "9 of 27"
 
 
 def _logit(p: float) -> float:
@@ -61,8 +61,14 @@ class Assessor:
         except (OSError, ValueError) as exc:
             print(f"[assess] no calibration ({exc}); run `python ml/calibrate.py`")
 
-    def assess(self, clf_prob: float, sim_share: float | None) -> dict | None:
-        """`sim_share` is in [0, 1], or None when similarity was unavailable."""
+    def assess(self, clf_prob: float, sim_share: float | None,
+               has_capability: bool = True) -> dict | None:
+        """`sim_share` is in [0, 1], or None when similarity was unavailable.
+
+        `has_capability`: the code can do something concretely malicious
+        (ml/behaviour.CAPABILITY). With the gate on, a package flagged on shape
+        alone is held at suspicious rather than called malicious.
+        """
         if not self.ready:
             return None
         cal = self.cal
@@ -79,14 +85,32 @@ class Assessor:
             model, x = cal["both"], [_logit(clf_prob), sim_share]
             sim_flag = sim_share >= cal["sim_flag"]
             basis = "classifier and code similarity"
-        # Without similarity there is no second vote to wait for.
-        tier = ("malicious" if clf_strict or (clf_flag and (sim_flag or sim_share is None))
-                else "suspicious" if clf_flag or sim_flag or clf_review
-                else "clean")
-        if clf_strict and not sim_flag:
-            basis += "; the classifier alone is confident enough"
-        elif clf_review and not clf_flag and not sim_flag:
-            basis += "; below the classifier's alarm threshold but high enough to review"
+        if cal.get("capability_gate"):
+            # Soft capability gate (ml/generalize.py): chosen on unseen malware
+            # families, 2025 months, and held on 2026 months at ~95% precision.
+            # Malicious needs the classifier AND a concrete capability, or the
+            # classifier alone at its strict (0.1% false-alarm) threshold.
+            tier = ("malicious" if (clf_flag and has_capability) or clf_strict
+                    else "suspicious" if clf_flag or sim_flag or clf_review
+                    else "clean")
+            if clf_strict and not has_capability:
+                basis += "; the classifier alone is confident enough, though no concrete capability was found"
+            elif clf_flag and not has_capability:
+                basis += ("; the score is high but no concrete malicious capability (code that "
+                          "runs by itself, a payload, exfiltration) was found, so review it")
+            elif clf_review and not clf_flag:
+                basis += "; below the classifier's alarm threshold but high enough to review"
+            elif sim_flag and not clf_flag:
+                basis += "; the code resembles known malware, but the classifier does not flag it"
+        else:
+            # Without similarity there is no second vote to wait for.
+            tier = ("malicious" if clf_strict or (clf_flag and (sim_flag or sim_share is None))
+                    else "suspicious" if clf_flag or sim_flag or clf_review
+                    else "clean")
+            if clf_strict and not sim_flag:
+                basis += "; the classifier alone is confident enough"
+            elif clf_review and not clf_flag and not sim_flag:
+                basis += "; below the classifier's alarm threshold but high enough to review"
 
         z = model["intercept"] + sum(c * v for c, v in zip(model["coef"], x))
         p_test = 1 / (1 + math.exp(-z))
@@ -105,4 +129,5 @@ class Assessor:
             "prior_high": PRIOR_HIGH,
             "basis": basis,
             "novel_malware_caught": NOVEL_MALWARE_CAUGHT,
+            "has_capability": bool(has_capability),
         }
