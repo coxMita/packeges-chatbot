@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from config import FEATURES_PARQUET, MODELS  # noqa: E402
 from similarity import SimilarityIndex, neighbour_vote  # noqa: E402
+from behaviour import CAPABILITY  # noqa: E402
 from split import dataset_splits  # noqa: E402
 
 SIM_FLAG = 0.60   # similarity share at or above which similarity "flags"
@@ -93,7 +94,10 @@ def main() -> int:
     review = gbdt.get("review_threshold", gbdt["threshold"])
     strict = gbdt.get("strict_threshold", 1.1)
     sim_flag = sim >= SIM_FLAG
-    malicious = (clf_flag & sim_flag) | (clf >= strict)
+    # Capability gate (backend/assess.py): "malicious" needs something the code
+    # can concretely do, unless the classifier clears its strict threshold.
+    cap = (test[[c for c in CAPABILITY if c in test.columns]].to_numpy() > 0).any(axis=1)
+    malicious = (clf_flag & cap) | (clf >= strict)   # the soft gate, as backend/assess.py
     suspicious = ~malicious & (clf_flag | sim_flag | (clf >= review))
     print("\n tier         benign   malware")
     for name, m in [("malicious", malicious), ("suspicious", suspicious),
@@ -110,6 +114,7 @@ def main() -> int:
         "classifier_only": {"coef": clf_only.coef_[0].tolist(),
                             "intercept": float(clf_only.intercept_[0])},
         "n_heldout": int(len(y)),
+        "capability_gate": True,
     }
     path = MODELS / "calibration.json"
     path.write_text(json.dumps(out, indent=2))

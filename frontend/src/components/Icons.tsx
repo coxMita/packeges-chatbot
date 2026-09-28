@@ -44,3 +44,5 @@ export const Brain = ({ size = 18 }: P) =>
 
 export const Message = ({ size = 18 }: P) =>
   svg(size, <path d="M4 5h16v11H9l-5 4z" />)
+
+export const Bolt = ({ size = 15 }: P) => svg(size, <path d="M13 3L5 13.5h6L10 21l8-10.5h-6z" />)

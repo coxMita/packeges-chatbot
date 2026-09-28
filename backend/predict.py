@@ -25,6 +25,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ml"))
 
 from config import MODELS  # noqa: E402
+from behaviour import capabilities  # noqa: E402
 from features import describe, extract_features, feature_names  # noqa: E402
 
 TOP_EVIDENCE = 8
@@ -101,6 +102,8 @@ class Verdict:
     evidence: list[Evidence] = field(default_factory=list)
     model_agreement: str | None = None
     embed_probability: float | None = None
+    # Concrete malicious capabilities found in the code (ml/behaviour.py).
+    capabilities: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +117,7 @@ class Verdict:
                 if self.embed_probability is not None else None
             ),
             "evidence": [e.to_dict() for e in self.evidence],
+            "capabilities": self.capabilities,
         }
 
 
@@ -132,6 +136,9 @@ class Scorer:
                 self.gbdt = pickle.load(fh)
             import shap
             self.explainer = shap.TreeExplainer(self.gbdt["model"])
+            # Score with the columns the model was trained on, in its order;
+            # the extractor may produce more than an older model knows.
+            self.feature_names = list(self.gbdt["feature_names"])
 
     @property
     def ready(self) -> bool:
@@ -166,6 +173,8 @@ class Scorer:
             malicious_probability=prob,
             threshold=threshold,
             evidence=self._evidence(x, feats),
+            capabilities=[{"feature": c, "count": round(float(feats[c]), 2), "description": describe(c)}
+                          for c in capabilities(feats)],
         )
 
     def _evidence(self, x: np.ndarray, feats: dict[str, float]) -> list[Evidence]:

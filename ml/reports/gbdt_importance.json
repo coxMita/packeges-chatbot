@@ -1,278 +1,434 @@
 [
   {
     "feature": "pkg_n_files",
-    "gain": 62589.43331515789
-  },
-  {
-    "feature": "obf_max_line_len",
-    "gain": 16225.741156250238
+    "gain": 49140.8337841481
   },
   {
     "feature": "pkg_loc",
-    "gain": 7639.235044181347
+    "gain": 12937.094959648326
   },
   {
-    "feature": "worst_file_categories",
-    "gain": 7535.60498675704
+    "feature": "autorun_categories",
+    "gain": 7932.476287469268
   },
   {
     "feature": "call_network_per_kloc",
-    "gain": 5391.970587730408
+    "gain": 6255.225152075291
   },
   {
-    "feature": "call_process_per_kloc",
-    "gain": 3695.0039809942245
+    "feature": "worst_file_danger",
+    "gain": 3818.508916324936
   },
   {
-    "feature": "worst_file_suspicious_per_kloc",
-    "gain": 3277.729038387537
-  },
-  {
-    "feature": "obf_ident_unique_ratio",
-    "gain": 2908.438774973154
-  },
-  {
-    "feature": "obf_str_entropy_max",
-    "gain": 2420.018267661333
-  },
-  {
-    "feature": "obf_long_line_count",
-    "gain": 2221.1991233229637
+    "feature": "worst_file_categories",
+    "gain": 3320.246483631432
   },
   {
     "feature": "pkg_has_readme",
-    "gain": 2212.6573126912117
+    "gain": 3272.1437169760466
   },
   {
-    "feature": "net_suspicious_host",
-    "gain": 1990.1815705299377
+    "feature": "obf_ident_unique_ratio",
+    "gain": 2696.2556020971388
   },
   {
-    "feature": "obf_str_entropy_mean",
-    "gain": 1594.8899935483932
+    "feature": "worst_file_suspicious_per_kloc",
+    "gain": 1614.0036911666393
+  },
+  {
+    "feature": "obf_max_line_len",
+    "gain": 1591.7023154442431
   },
   {
     "feature": "obf_str_len_max",
-    "gain": 1500.8441663086414
+    "gain": 1537.3871687538922
   },
   {
-    "feature": "decode_then_exec",
-    "gain": 1496.7636744976044
+    "feature": "call_process_per_kloc",
+    "gain": 1402.0215053781867
   },
   {
-    "feature": "obf_str_len_mean",
-    "gain": 1376.0056410431862
-  },
-  {
-    "feature": "install_net_at_toplevel",
-    "gain": 1272.3023055791855
-  },
-  {
-    "feature": "call_dunder_access",
-    "gain": 1188.1039133667946
-  },
-  {
-    "feature": "pkg_n_py_files",
-    "gain": 1181.1606664955616
-  },
-  {
-    "feature": "call_suspicious_import",
-    "gain": 1151.5736803412437
-  },
-  {
-    "feature": "call_process",
-    "gain": 949.6503998339176
-  },
-  {
-    "feature": "install_hook_subclass",
-    "gain": 933.9790904521942
-  },
-  {
-    "feature": "obf_ident_len_mean",
-    "gain": 884.1665389835835
+    "feature": "obf_str_entropy_mean",
+    "gain": 1328.8769684825093
   },
   {
     "feature": "pkg_py_file_ratio",
-    "gain": 873.2360002398491
+    "gain": 1191.9823780097067
   },
   {
-    "feature": "call_try_except_pass",
-    "gain": 841.2682009339333
-  },
-  {
-    "feature": "pkg_parse_failures",
-    "gain": 784.8399932384491
-  },
-  {
-    "feature": "obf_non_ascii_ratio",
-    "gain": 765.1181186437607
-  },
-  {
-    "feature": "net_url_count",
-    "gain": 728.0766290724277
-  },
-  {
-    "feature": "pkg_loc_per_file",
-    "gain": 653.7033424377441
-  },
-  {
-    "feature": "decode_calls_per_kloc",
-    "gain": 634.9654774963856
-  },
-  {
-    "feature": "install_has_cmdclass",
-    "gain": 596.5895372033119
-  },
-  {
-    "feature": "exfil_browser",
-    "gain": 540.2374633550644
-  },
-  {
-    "feature": "call_exec_per_kloc",
-    "gain": 517.4148740172386
-  },
-  {
-    "feature": "obf_ident_single_char_ratio",
-    "gain": 501.7637406885624
-  },
-  {
-    "feature": "net_hardcoded_ip",
-    "gain": 405.10931146144867
-  },
-  {
-    "feature": "call_import_in_function",
-    "gain": 379.3864488005638
-  },
-  {
-    "feature": "call_lambda",
-    "gain": 370.3284647166729
-  },
-  {
-    "feature": "install_proc_at_toplevel",
-    "gain": 354.0102247595787
-  },
-  {
-    "feature": "exfil_total_per_kloc",
-    "gain": 337.1488085389137
-  },
-  {
-    "feature": "call_network",
-    "gain": 325.3902689218521
-  },
-  {
-    "feature": "obf_high_entropy_count",
-    "gain": 289.0379492342472
-  },
-  {
-    "feature": "install_has_setup_py",
-    "gain": 220.96527528762817
-  },
-  {
-    "feature": "call_dynamic_attr",
-    "gain": 218.71533849835396
-  },
-  {
-    "feature": "install_toplevel_call",
-    "gain": 210.8453429043293
-  },
-  {
-    "feature": "call_file_write",
-    "gain": 181.47701686620712
-  },
-  {
-    "feature": "call_exec",
-    "gain": 169.79404827952385
-  },
-  {
-    "feature": "exfil_total",
-    "gain": 164.68580529093742
+    "feature": "net_suspicious_host",
+    "gain": 1162.8006340116262
   },
   {
     "feature": "pkg_typosquat_distance",
-    "gain": 160.5657121837139
+    "gain": 1129.3851756975055
   },
   {
-    "feature": "exfil_cloud",
-    "gain": 158.1857804954052
+    "feature": "decode_then_exec",
+    "gain": 1112.9953128546476
+  },
+  {
+    "feature": "install_hook_subclass",
+    "gain": 972.9407691061497
+  },
+  {
+    "feature": "obf_str_entropy_max",
+    "gain": 948.7145205456764
+  },
+  {
+    "feature": "call_suspicious_import",
+    "gain": 939.2719997894019
+  },
+  {
+    "feature": "obf_str_len_mean",
+    "gain": 935.4962132945657
+  },
+  {
+    "feature": "decode_calls_per_kloc",
+    "gain": 759.1764536127448
+  },
+  {
+    "feature": "obf_ident_len_mean",
+    "gain": 750.4409004177724
+  },
+  {
+    "feature": "pkg_loc_per_file",
+    "gain": 625.4697332624346
+  },
+  {
+    "feature": "obf_non_ascii_ratio",
+    "gain": 618.1287319436669
+  },
+  {
+    "feature": "pkg_n_py_files",
+    "gain": 563.982414781116
+  },
+  {
+    "feature": "obf_ident_single_char_ratio",
+    "gain": 547.5951118990779
+  },
+  {
+    "feature": "call_try_except_pass",
+    "gain": 516.1780393933877
+  },
+  {
+    "feature": "proc_hidden",
+    "gain": 488.94519236683846
+  },
+  {
+    "feature": "install_net_at_toplevel",
+    "gain": 438.5451840311289
+  },
+  {
+    "feature": "call_dunder_access",
+    "gain": 390.1971784308553
+  },
+  {
+    "feature": "net_url_count",
+    "gain": 318.49982292950153
+  },
+  {
+    "feature": "install_has_setup_py",
+    "gain": 303.8251293450594
+  },
+  {
+    "feature": "flow_decode_exec",
+    "gain": 277.17172399908304
+  },
+  {
+    "feature": "install_toplevel_call",
+    "gain": 263.8168098181486
+  },
+  {
+    "feature": "obf_high_entropy_count",
+    "gain": 241.86237283796072
+  },
+  {
+    "feature": "pth_code_lines",
+    "gain": 238.49915596842766
+  },
+  {
+    "feature": "net_hardcoded_ip",
+    "gain": 217.57414913433604
+  },
+  {
+    "feature": "call_process",
+    "gain": 195.74752475321293
+  },
+  {
+    "feature": "autorun_import_process",
+    "gain": 194.5301492512226
+  },
+  {
+    "feature": "exfil_browser",
+    "gain": 194.20220389962196
+  },
+  {
+    "feature": "autorun_import_decode",
+    "gain": 189.92831096053123
+  },
+  {
+    "feature": "obf_long_line_count",
+    "gain": 186.03678666474298
+  },
+  {
+    "feature": "n_danger_files",
+    "gain": 179.40905739367008
+  },
+  {
+    "feature": "exfil_total_per_kloc",
+    "gain": 175.82788325846195
+  },
+  {
+    "feature": "call_exec_per_kloc",
+    "gain": 170.29193095117807
+  },
+  {
+    "feature": "autorun_install_network",
+    "gain": 166.3562323153019
   },
   {
     "feature": "pkg_has_license",
-    "gain": 148.3148764371872
+    "gain": 158.61088727414608
   },
   {
-    "feature": "install_toplevel_stmts",
-    "gain": 126.49089866876602
+    "feature": "call_lambda",
+    "gain": 151.97880437225103
   },
   {
-    "feature": "obf_b64ish_count",
-    "gain": 116.83908304572105
+    "feature": "call_dynamic_attr",
+    "gain": 142.98398818075657
   },
   {
-    "feature": "call_env_read",
-    "gain": 115.11699855327606
-  },
-  {
-    "feature": "net_suspicious_tld",
-    "gain": 102.95199173688889
-  },
-  {
-    "feature": "decode_calls",
-    "gain": 97.74243950843811
+    "feature": "call_import_in_function",
+    "gain": 142.8866487517953
   },
   {
     "feature": "pkg_has_tests",
-    "gain": 95.45180439949036
+    "gain": 113.57679679989815
   },
   {
-    "feature": "exfil_token",
-    "gain": 83.82817274332047
+    "feature": "decode_calls",
+    "gain": 112.87149024009705
   },
   {
-    "feature": "call_computed_import",
-    "gain": 79.41843196749687
+    "feature": "obf_b64ish_count",
+    "gain": 112.16234757751226
   },
   {
-    "feature": "call_deserialize_per_kloc",
-    "gain": 68.95757621526718
+    "feature": "call_network",
+    "gain": 94.07873497158289
   },
   {
-    "feature": "exfil_env",
-    "gain": 68.41315132379532
+    "feature": "install_has_cmdclass",
+    "gain": 76.23826591670513
   },
   {
-    "feature": "call_chmod",
-    "gain": 37.14133447408676
+    "feature": "call_env_read",
+    "gain": 76.07337759435177
   },
   {
-    "feature": "exfil_wallet",
-    "gain": 36.66499900817871
+    "feature": "call_file_write",
+    "gain": 70.65288796648383
   },
   {
-    "feature": "install_exec_at_toplevel",
-    "gain": 27.7276029586792
+    "feature": "call_exec",
+    "gain": 69.33274401724339
   },
   {
-    "feature": "obf_hexish_count",
-    "gain": 27.16950798034668
+    "feature": "autorun_import_exec",
+    "gain": 60.77535845339298
+  },
+  {
+    "feature": "autorun_spawn",
+    "gain": 53.493027061223984
+  },
+  {
+    "feature": "exfil_total",
+    "gain": 52.283556789159775
   },
   {
     "feature": "call_deserialize",
-    "gain": 19.4945387840271
+    "gain": 48.570890218019485
   },
   {
-    "feature": "obf_char_code_build",
-    "gain": 14.729903757572174
+    "feature": "install_toplevel_stmts",
+    "gain": 48.00951215624809
   },
   {
-    "feature": "exfil_ssh",
-    "gain": 8.19751489162445
+    "feature": "call_deserialize_per_kloc",
+    "gain": 47.7568269893527
+  },
+  {
+    "feature": "flow_download_execute",
+    "gain": 46.89216084778309
   },
   {
     "feature": "pkg_n_binaries",
-    "gain": 0.6001660227775574
+    "gain": 34.68877276778221
+  },
+  {
+    "feature": "pkg_parse_failures",
+    "gain": 33.96816988289356
+  },
+  {
+    "feature": "net_suspicious_tld",
+    "gain": 32.44867656752467
+  },
+  {
+    "feature": "bin_orphan_modules",
+    "gain": 25.016824811697006
+  },
+  {
+    "feature": "bin_exfil_refs",
+    "gain": 23.16413974761963
+  },
+  {
+    "feature": "call_computed_import",
+    "gain": 17.4843737706542
+  },
+  {
+    "feature": "obf_hexish_count",
+    "gain": 16.713729113340378
+  },
+  {
+    "feature": "exfil_cloud",
+    "gain": 13.804346024990082
+  },
+  {
+    "feature": "exfil_ssh",
+    "gain": 11.297513782978058
+  },
+  {
+    "feature": "call_chmod",
+    "gain": 10.579037286806852
+  },
+  {
+    "feature": "exfil_env",
+    "gain": 8.985472083091736
+  },
+  {
+    "feature": "proc_python_inline",
+    "gain": 8.210099935531616
+  },
+  {
+    "feature": "flow_net_to_file",
+    "gain": 7.813607066869736
+  },
+  {
+    "feature": "autorun_import_write",
+    "gain": 5.828849017620087
+  },
+  {
+    "feature": "install_exec_at_toplevel",
+    "gain": 5.370732009410858
+  },
+  {
+    "feature": "autorun_install_write",
+    "gain": 4.4058599174022675
+  },
+  {
+    "feature": "autorun_import_network",
+    "gain": 4.321352005004883
+  },
+  {
+    "feature": "flow_tainted_process",
+    "gain": 3.3833230435848236
+  },
+  {
+    "feature": "bin_url_count",
+    "gain": 3.263714075088501
+  },
+  {
+    "feature": "autorun_install_process",
+    "gain": 3.094706043601036
+  },
+  {
+    "feature": "exfil_token",
+    "gain": 2.1191830188035965
+  },
+  {
+    "feature": "autorun_import_env",
+    "gain": 2.003441959619522
+  },
+  {
+    "feature": "exfil_wallet",
+    "gain": 1.7065800428390503
+  },
+  {
+    "feature": "autorun_install_exec",
+    "gain": 1.621000051498413
+  },
+  {
+    "feature": "autorun_import_secret",
+    "gain": 0.5385689735412598
+  },
+  {
+    "feature": "autorun_install_decode",
+    "gain": 0.0
+  },
+  {
+    "feature": "autorun_install_env",
+    "gain": 0.0
+  },
+  {
+    "feature": "autorun_install_secret",
+    "gain": 0.0
+  },
+  {
+    "feature": "autorun_native_load",
+    "gain": 0.0
+  },
+  {
+    "feature": "bin_compiled_init",
+    "gain": 0.0
+  },
+  {
+    "feature": "bin_net_indicators",
+    "gain": 0.0
+  },
+  {
+    "feature": "bin_shell_cmd",
+    "gain": 0.0
   },
   {
     "feature": "call_obfuscated_import",
+    "gain": 0.0
+  },
+  {
+    "feature": "flow_charcode_exec",
+    "gain": 0.0
+  },
+  {
+    "feature": "flow_hidden_endpoint",
+    "gain": 0.0
+  },
+  {
+    "feature": "flow_net_exec",
+    "gain": 0.0
+  },
+  {
+    "feature": "flow_secret_send",
+    "gain": 0.0
+  },
+  {
+    "feature": "install_proc_at_toplevel",
+    "gain": 0.0
+  },
+  {
+    "feature": "obf_char_code_build",
+    "gain": 0.0
+  },
+  {
+    "feature": "proc_shell_downloader",
+    "gain": 0.0
+  },
+  {
+    "feature": "proc_temp_exec",
+    "gain": 0.0
+  },
+  {
+    "feature": "script_downloader",
     "gain": 0.0
   }
 ]

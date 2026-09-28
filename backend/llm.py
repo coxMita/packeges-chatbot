@@ -61,9 +61,13 @@ value was among the malicious and the benign packages the model learned from. \
 Use it to say WHY a feature pushed the score, e.g. "39% of the malware the \
 model was trained on did this, against almost no benign packages". Quote the \
 shares as given; do not invent others.
-11. Structure: first the overall assessment, then the suspect code (file, \
-calls, lines), then how the strongest evidence compares with the training \
-data. Plain prose, 3-4 short paragraphs. No preamble, no bullet lists, no \
+11. A "concrete capabilities" list says what the code can actually do (runs \
+by itself on install/import, hides a process, downloads and runs a file...). \
+If present, describe those first when explaining the suspect code; if it says \
+none, say the flag rests on how the package looks rather than on any payload.
+12. Structure: first the overall assessment, then the suspect code \
+(capabilities, file, calls, lines), then how the strongest evidence compares \
+with the training data. Plain prose, 3-4 short paragraphs. No preamble, no bullet lists, no \
 markdown headers. Do not restate the confidence number -- the UI shows it.
 """
 
@@ -156,6 +160,15 @@ def evidence_lines(package: str, version: str, verdict: dict, metadata: dict) ->
         side = "just below" if margin < 0 else "just above"
         lines.append(f"CLOSE CALL: the probability is {side} the threshold. "
                      "Say that this verdict is borderline.")
+
+    caps = verdict.get("capabilities") or []
+    if caps:
+        lines += ["", "Concrete capabilities found by reading the code (what it can actually do):"]
+        lines += [f"- {c['description']}" + (f" (x{c['count']:g})" if c.get("count", 1) > 1 else "")
+                  for c in caps[:8]]
+    elif verdict.get("assessment"):
+        lines += ["", "Concrete capabilities found by reading the code: none -- nothing runs by "
+                      "itself, no payload or exfiltration was found."]
 
     lines += ["", "Ranked evidence from the classifier "
                   "(contribution > 0 pushed toward MALICIOUS, < 0 toward BENIGN):"]

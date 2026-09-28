@@ -36,6 +36,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from behaviour import MONOTONE_PREFIXES
 from config import FEATURES_PARQUET, MODELS, PROCESSED, RANDOM_SEED, REPORTS, ensure_dirs
 from features import feature_names
 from split import dataset_splits, with_synthetic, xy
@@ -137,6 +138,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=FEATURES_PARQUET)
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--include-future", action=argparse.BooleanOptionalAction, default=True,
+                    help="also train on the future-holdout malware (default). Its unseen-data "
+                         "performance is measured by ml/generalize.py's monthly retraining.")
+    ap.add_argument("--synthetic", action=argparse.BooleanOptionalAction, default=False,
+                    help="add ml/augment.py's trojanised packages (hurt on unseen families)")
     args = ap.parse_args()
 
     ensure_dirs()
@@ -148,20 +154,29 @@ def main() -> int:
         return 1
 
     splits = dataset_splits(df)
-    train_df = splits.train
+    # Validation and test stay held out either way; the future malware is the
+    # newest data there is, and a deployed model should know it.
+    train_df = (pd.concat([splits.train, splits.future], ignore_index=True)
+                if args.include_future else splits.train)
     n_real = len(train_df)
-    # Synthetic trojanized libraries (ml/augment.py): training only, and only
-    # those whose host and donor code both sit in this training split.
-    train_df = with_synthetic(train_df, PROCESSED / "augmented.parquet")
-    print(f"[data] + {len(train_df) - n_real} synthetic packages for training")
-    params = {**PARAMS, **json.loads(TUNED.read_text())} if TUNED.exists() else PARAMS
+    if args.synthetic:
+        # Trojanised libraries (ml/augment.py): training only, and only those
+        # whose host and donor code both sit in this training split.
+        train_df = with_synthetic(train_df, PROCESSED / "augmented.parquet")
+        print(f"[data] + {len(train_df) - n_real} synthetic packages for training")
+    params = {**PARAMS, **json.loads(TUNED.read_text())} if TUNED.exists() else dict(PARAMS)
     if TUNED.exists():
         print(f"[params] tuned set from {TUNED.name}")
+    # A danger signal may only raise the score (ml/behaviour.py): on unseen
+    # families this beat the unconstrained model on the dev set.
+    params["monotone_constraints"] = [1 if c.startswith(MONOTONE_PREFIXES) else 0 for c in cols]
+    params["monotone_constraints_method"] = "advanced"
     X, y = xy(train_df, cols)
     groups = train_df["group"].to_numpy()
 
-    print(f"[data] {len(df)} packages | train {n_real} / val {len(splits.val)} / "
-          f"test {len(splits.test)} | future (held out) {len(splits.future)}")
+    print(f"[data] {len(df)} packages | train {n_real} (future malware "
+          f"{'included' if args.include_future else 'held out'}) / val {len(splits.val)} / "
+          f"test {len(splits.test)}")
     print(f"[data] positives: train {int(y.sum())}, val {int(splits.val['label'].sum())}, "
           f"test {int(splits.test['label'].sum())}")
 
@@ -214,6 +229,8 @@ def main() -> int:
         "fbeta": FBETA,
         "cv_roc_auc": float(roc_auc_score(y_real, oof_real)),
         "cv_pr_auc": float(average_precision_score(y_real, oof_real)),
+        "include_future": bool(args.include_future),
+        "feature_version": 3,
     }
     with open(MODELS / "gbdt.pkl", "wb") as fh:
         pickle.dump(artifact, fh)

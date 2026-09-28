@@ -156,6 +156,7 @@ async def analyze(req: AnalyzeRequest) -> dict:
             "assessment": assessor.assess(
                 verdict.malicious_probability,
                 similar["malicious_percent"] / 100 if similar else None,
+                has_capability=bool(verdict.capabilities),
             ),
         }
     finally:

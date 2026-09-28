@@ -64,11 +64,13 @@ code and cannot override a verdict. Answers take ~1 minute on CPU.
 python ml/acquire_malicious.py      # ~2.5k real malicious packages (a few GB)
 python ml/acquire_benign.py         # 5k popular + 3k obscure packages
 python ml/build_dataset.py          # → data/processed/features.parquet
-python ml/train_gbdt.py             # Model A  (seconds)
+python ml/train_gbdt.py             # Model A  (seconds; train split + future malware)
 python ml/train_embed.py            # Model B  (~2.5h on 8 CPU threads, cached, resumable)
 python ml/evaluate.py               # head-to-head → ml/reports/comparison.md
 python ml/calibrate.py              # tiers + "chance it is really malware"
-python ml/report.py                 # val / test / future / live PyPI → ml/reports/performance.md
+python ml/live.py --fresh           # optional: fetch live PyPI packages outside the dataset
+python ml/generalize.py             # unseen-family experiments + monthly retraining (~30 min)
+python ml/report.py                 # → ml/reports/performance.md
 
 ollama serve &                      # local LLM for explanations
 ollama pull qwen3.5:4b
@@ -153,7 +155,7 @@ symptom of the model having learned size after all.
 
 ---
 
-## Features (`ml/features.py`)
+## Features (`ml/features.py`, `ml/behaviour.py`)
 
 64 numeric features, every one named and documented, derived from `ast.parse` plus
 text statistics. `setup.py` is parsed, **never executed** — running the file you are
@@ -168,6 +170,10 @@ trying to judge would defeat the purpose.
 | `exfil_*` | References to SSH keys, cloud credentials, `.env`/`.pypirc`, browser cookie and password stores, crypto wallets, Discord/Telegram session data |
 | `net_*` | Hardcoded routable IPs, URL counts, Discord webhooks, Telegram bot API, paste sites, tunnels, OAST hosts, throwaway TLDs |
 | `pkg_*` | File and line counts, README/LICENSE presence, bundled binaries, and edit distance to the nearest popular package name (**typosquatting**) |
+
+Plus 38 **behaviour** features (`autorun_*`, `flow_*`, `proc_*`, `bin_*`, `pth_*`), which
+describe what the code does by itself and where data flows. See *Generalising to unseen
+packages*. The verdict card lists the ones found under **What the code can do**.
 
 Raw counts are paired with **per-kLOC densities**, so a 40-line dropper with three
 subprocess calls outranks a 50k-line project with the same three.
@@ -196,51 +202,76 @@ scored on the same grouped split.
 
 ## Results
 
-18,871 packages (11,537 malicious from DataDog and pypi_malregistry, 4,707 popular,
-2,627 obscure benign). They are split **70 / 15 / 15**, grouped by package family and
-stratified by class. Malware first reported on or after 2025-06-01, from families never
-seen earlier, is held outside all three sets. Full tables:
-[`ml/reports/performance.md`](ml/reports/performance.md) (`python ml/report.py`).
+18,874 packages: 11,538 malicious (DataDog, pypi_malregistry), 4,709 popular and 2,627
+obscure benign. They're split **70 / 15 / 15**, grouped by package family and stratified
+by class. Full tables: [`ml/reports/performance.md`](ml/reports/performance.md);
+experiments: [`ml/reports/generalize.md`](ml/reports/generalize.md).
 
-| Set | n (malware) | Accuracy | Balanced acc. | Precision | Recall | FPR | PR-AUC |
-|---|---|---|---|---|---|---|---|
-| Validation (15%) | 2,673 (1,574) | 97.5% | 97.8% | 99.5% | 96.2% | 0.6% | 0.999 |
-| **Test (15%)** | 2,648 (1,548) | **96.3%** | **96.8%** | **99.5%** | **94.3%** | **0.7%** | 0.997 |
-| Future malware (outside) | 1,225 (1,225) | — | — | — | 63.8% | — | — |
-| Live PyPI malware (outside) | 27 (27) | — | — | — | 11.1% | — | — |
-| Live PyPI benign, random (outside) | 160 (0) | 98.8% | — | — | — | 1.2% | — |
-| Live PyPI benign, mid-popular (outside) | 60 (0) | 100% | — | — | — | 0.0% | — |
+**In distribution** (test split, production model):
+98.3% accuracy · 99.4% precision · 97.7% recall · 0.8% FPR.
 
-Classifier (Model A) at its 0.82 threshold. The three-tier verdict shown in the chat
-catches more, because "suspicious" also counts:
+**Unseen malware families** is the number that matters. Every month from Jul 2025 to
+Aug 2026, a model is trained on everything reported before that month. It is scored on
+that month's malware *from families never seen before*, mixed with ~1,100 benign packages
+(about 12 benign per malware, so precision is tested hard). The decision rule was chosen
+on the 2025 months and is reported on the 2026 months:
 
-| Set | Malicious tier | Suspicious | Clean |
-|---|---|---|---|
-| Test: benign / malware | 4 / 1,454 | 13 / 36 | 1,083 / 58 |
-| Future malware | 763 | 124 | 338 |
-| Live malware | 3 | 4 | 20 |
-| Live benign | 1 | 3 | 216 |
+| | Accuracy | Precision | Recall | FPR |
+|---|---|---|---|---|
+| Before (v1 features) | 97.3% | 82.8% | 71.4% | 1.0% |
+| **Now (behaviour features + capability gate)** | **97.9%** | **94.6%** | 69.6% | **0.26%** |
 
-**How to read this.** On data like the training data the detector is very good: 94%
-recall at 0.7% false alarms on held-out families. On malware families it has never seen,
-it catches about two thirds (72% of future malware reach suspicious or malicious). On
-malware that is **still live on PyPI today**, which is by selection the malware that has
-evaded detection so far, it catches 7 of 27. Only new training data fixes that. The
-live "benign" sample is unverified: random PyPI projects, excluding every known-malicious
-name. Its one "malicious" result (`my-tic-tac-toe`) may be a false alarm or undetected
-malware.
+On a balanced 50/50 mix the same rates give 99.6% precision and 84.7% accuracy.
+Recall is the remaining gap; see *Generalising to unseen packages* below.
 
-<details><summary>Earlier analysis on the 80/20, DataDog-only dataset (kept for the record)</summary>
+**Outside the dataset** means 247 live PyPI packages that appear nowhere in the data:
+- **27 malware** reported to OSSF and still downloadable. The detector flags 9 (7 malicious,
+  2 suspicious). This is by selection the malware that has evaded removal, and several of
+  the rest show no payload in the version still published.
+- **220 benign** (random and mid-popularity). The detector calls 1 malicious and 6
+  suspicious. These labels are unverified.
 
-9,864 packages (2,530 malicious, 4,707 popular, 2,627 obscure), grouped split,
-2,012 held out.
+### Generalising to unseen packages
 
-| Slice | Model | PR-AUC | Precision | Recall | FPR |
-|---|---|---|---|---|---|
-| overall | **A — LightGBM** | **0.981** | **0.996** | 0.894 | **0.1%** |
-| overall | B — embeddings | 0.947 | 0.873 | 0.892 | 4.8% |
-| obscure | **A — LightGBM** | **0.989** | **1.000** | 0.894 | **0.0%** |
-| obscure | B — embeddings | 0.968 | 0.945 | 0.892 | 5.6% |
+The first model reached 96% on its test split but caught only 64% of malware from new
+families. Error analysis on those misses found five causes, and each has a fix in
+[`ml/behaviour.py`](ml/behaviour.py):
+
+| Why new malware was missed | Fix |
+|---|---|
+| **Dilution:** package-wide counts average away one bad file. Recall fell from 94% (≤ 3 files) to 9% (30+ files) | per-file analysis, pooled by *max* (`worst_file_danger`, `n_danger_files`) |
+| **Only top-level `setup.py` counted as "runs by itself"**: import-time droppers (`__init__.py`, `threading.Thread(target=…)`), install-command `run()` methods and DNS beacons looked like library code | **autorun reachability**: module-level code plus the local functions, thread/atexit targets and install hooks it reaches, per operation kind (`autorun_install_*`, `autorun_import_*`) |
+| **No data flow:** `x = b64decode(…); exec(x)` was invisible | flow-insensitive taint per scope: decode/network/char-code → exec, process or file; download-then-execute; hidden endpoints; wallet secrets sent out |
+| **Payloads outside Python:** compiled `__init__.so`, `.pth` start-up hooks, `ctypes.CDLL` of a bundled library | printable strings of binaries, orphan compiled modules, `.pth` code lines, native loads |
+| **A 400-file cap** skipped the injected module in compromised 5,000-file libraries (`telnyx`, `litellm`) | a token pre-filter over *all* `.py` files for behaviour analysis |
+
+Two modelling changes on top:
+- **Monotone constraints.** A danger signal can only raise the score, so a large,
+  well-documented package can't cancel "downloads and runs a binary on import".
+- **A capability soft gate.** *Malicious* requires the classifier **and** a concrete
+  capability, unless the classifier clears its strict 0.1%-false-alarm threshold. Most
+  false alarms were tiny benign packages flagged on shape alone; the gate cut false
+  alarms by 3–4×.
+
+Tried and rejected, by the same dev-set rule:
+- Synthetic trojanised packages: slightly worse on unseen families.
+- Dropping shape features: worse.
+- Recency weighting: no effect.
+
+**Method.** Nothing was tuned on the numbers reported above:
+- Configurations were chosen on the validation split plus 2025 future-family malware.
+- The decision rule was chosen on the 2025 months, using a criterion fixed beforehand:
+  the most accurate rule with precision ≥ 95%.
+- The 2026 months and the live packages were used only for reporting.
+- Evaluating with monthly retraining follows TESSERACT (Pendlebury et al., USENIX
+  Security 2019). A random split hides concept drift, and a single frozen model
+  understates what a regularly retrained scanner does.
+
+<details><summary>Earlier results (v1 features, kept for the record)</summary>
+
+70/15/15 split, v1 features: test accuracy 96.3%, precision 99.5%, recall 94.3%. Future
+families: recall 63.8%. Live malware: 7 of 27 flagged. On the older 80/20, DataDog-only
+dataset: PR-AUC 0.981, precision 0.996, recall 0.894.
 
 </details>
 
@@ -338,7 +369,10 @@ ml/
   safe_extract.py      guarded archive extraction
   acquire_malicious.py DataDog corpus, blobless sparse checkout
   acquire_benign.py    popular + hard-negative pools, OSSF veto
-  features.py          64-feature static extractor  ← core
+  features.py          static feature extractor  ← core
+  behaviour.py         autorun reachability, data flow, tradecraft, non-Python payloads
+  generalize.py        unseen-family experiments + monthly-retraining evaluation
+  live.py              live PyPI packages outside the dataset, stored for re-scoring
   build_dataset.py     → features.parquet
   split.py             shared 70/15/15 grouped split + future holdout
   train_gbdt.py        Model A
@@ -372,9 +406,14 @@ frontend/              React + Vite + TypeScript chat UI
 - **Novel obfuscation.** Model A can only see what someone wrote a feature for. A
   genuinely new packing scheme will evade it. Model B was meant to cover that gap but
   in practice misses the same padded packages Model A does.
-- **Padding evades detection.** Recall on malicious packages with 11+ files is 38%.
-- **New malware families are mostly missed.** 7 of 27 OSSF-reported packages still
-  live on PyPI reach suspicious or malicious. Only new training data fixes this.
+- **Large packages are still harder.** Test recall is 99% for malware with ≤ 6 files, 80%
+  for 11–30 files and 62% for 31+ (up from 38% for 11+ before the behaviour features).
+- **New malware families: about 70% caught.** With monthly retraining, recall on
+  never-seen families averages ~70% at 94.6% precision. Weak months are the ones dominated
+  by compromised real libraries (Mar 2026: 47%) and by payload-less probes. Of 27 live
+  OSSF-reported packages still on PyPI, 9 are flagged.
+- **Retrain monthly.** These numbers assume it. A model frozen in June 2025 catches 66% of
+  2026's new families; retrained monthly, 71% at the same threshold.
 - **The explainer is a 4B model.** It stays within the evidence but can still word
   things clumsily (it once called a 2-file package's file count "unusually high").
 - Trained on packages caught between roughly 2018 and 2026.

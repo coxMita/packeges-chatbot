@@ -3,7 +3,7 @@ import { Disclosure } from './Disclosure'
 import { EvidenceTable } from './EvidenceTable'
 import { FileScanPanel } from './FileScanPanel'
 import { Gauge } from './Gauge'
-import { Chart, Code, Nodes } from './Icons'
+import { Bolt, Chart, Code, Nodes } from './Icons'
 import { SimilarityPanel } from './SimilarityPanel'
 
 type Tier = 'malicious' | 'suspicious' | 'clean'
@@ -20,6 +20,7 @@ export function VerdictCard({ result }: { result: AnalysisResult }) {
   const tier: Tier = a?.tier ?? (result.verdict === 'malicious' ? 'malicious' : 'clean')
   const scan = result.file_scan
   const flagged = scan?.files.length ?? 0
+  const caps = result.capabilities ?? []
 
   return (
     <div className="card">
@@ -64,6 +65,30 @@ export function VerdictCard({ result }: { result: AnalysisResult }) {
           malware unlike it, this detector caught {a.novel_malware_caught}. Based on{' '}
           {a.basis}.
         </p>
+      )}
+
+      {caps.length > 0 && (
+        <Disclosure
+          icon={<Bolt />}
+          title="What the code can do"
+          meta={`${caps.length} ${caps.length === 1 ? 'capability' : 'capabilities'}`}
+          defaultOpen
+        >
+          <div className="caps">
+            {caps.map((c) => (
+              <div className="cap" key={c.feature}>
+                <span className={`cap-dot ${tier}`} />
+                <span className="cap-desc">{c.description}</span>
+                {c.count > 1 && <span className="cap-count">×{c.count}</span>}
+              </div>
+            ))}
+          </div>
+          <p className="note">
+            Concrete behaviour found by reading the code: what runs by itself on install or
+            import, where decoded or downloaded data flows, and payloads outside Python. A
+            package is only called malicious when it can do at least one of these.
+          </p>
+        </Disclosure>
       )}
 
       {scan && flagged > 0 && (
